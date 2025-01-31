@@ -14,7 +14,7 @@
 bl_info = {
     "name": "VOTV Print Exporter (legacy)",
     "author": "drywallEater (doctorkrazy)",
-    "version": (1, 1, 1),
+    "version": (1, 1, 2),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar",
     "description": "An extension to export 3D models as printable objects in VOTV",
@@ -459,6 +459,8 @@ class VOTVE_PT_properties(bpy.types.Panel):
 
         materialUI = []
 
+        nonMesh = False
+
         if selected_objects:
             for obj in selected_objects:
                 if obj.type == 'MESH':
@@ -478,12 +480,12 @@ class VOTVE_PT_properties(bpy.types.Panel):
                                     materialRow.prop(setting, "materialType", text=f"Type")
                                     materialRow.prop(setting, "materialFilter", text=f"Filter")
                 else:
-                    materialsBox.row().label(text="One or more object in selection cannot contain materials")
-                    break
+                    nonMesh = True
         else:
             materialsBox.row().label(text="No object selected.")
 
-
+        if nonMesh:
+            materialsBox.row().label(text="One or more object in selection cannot contain materials")
     
 class VOTVE_PT_lightProperties(bpy.types.Panel):
     bl_label = "Light settings:"
