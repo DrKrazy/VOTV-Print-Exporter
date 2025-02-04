@@ -14,12 +14,17 @@
 bl_info = {
     "name": "VOTV Print Exporter (legacy)",
     "author": "drywallEater (doctorkrazy)",
-    "version": (1, 2, 0),
+    "version": (1, 2, 1),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar",
     "description": "An extension to export 3D models as printable objects in VOTV",
     "category": "Export",
 }
+
+import bpy  # type: ignore
+import os
+import mathutils # type: ignore
+import numpy as np # type: ignore
 
 import bpy  # type: ignore
 import os
@@ -53,14 +58,12 @@ def calculate_overall_bounding_box(selected_objects):
     return overall_dimensions
 
 def getSizeLimit(limitIdentifier):
-    return [100.00, 100.00, 150.00] if limitIdentifier == "FULLSIZE" else [22.50, 22.50, 30.00]
+    return (100.00, 100.00, 150.00) if limitIdentifier == "FULLSIZE" else (22.50, 22.50, 30.00)
 
 def exportOBJ(self, file_path, exportSelected):
     try:
-        if bpy.app.version >= (4, 0, 0):
-            bpy.ops.wm.obj_export(filepath=file_path, export_selected_objects=exportSelected)
-        else:
-            bpy.ops.export_scene.obj(filepath=file_path, use_selection=exportSelected)
+        export_func = bpy.ops.wm.obj_export if bpy.app.version >= (4, 0, 0) else bpy.ops.export_scene.obj
+        export_func(filepath=file_path, export_selected_objects=exportSelected)
     except:
         self.report({'ERROR'}, "Export path does not exist.")
         return {"CANCELLED"}
@@ -210,12 +213,8 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 
 def saveImage(exportpath, image):
     try:
-        if bpy.app.version > (3, 0, 0):
-            image.file_format = "PNG"
-            image.save(filepath=exportpath)
-        else:
-            image.file_format = "PNG"
-            image.save_render(filepath = exportpath)
+        image.file_format = "PNG"
+        image.save(filepath=exportpath)
     except Exception as e:
         print(f"Failed to save image {exportpath}: {e}")
 
@@ -254,40 +253,19 @@ def exportOBJMaterials(obj, exportpath):
 
 def sizeCheck():
     returnMsg = "Success: Completed"
-    sizeLimit = getSizeLimit(bpy.context.scene.sizelimit)
+    maxX, maxY, maxZ = getSizeLimit(bpy.context.scene.sizelimit)
 
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in bpy.context.scene.objects:
-        if obj.type == 'MESH' and obj.name in bpy.context.view_layer.objects:
-            obj.select_set(True)
+    overall_width, overall_height, overall_depth = calculate_overall_bounding_box(bpy.context.selected_objects)
+    x_dim = round(overall_width / 2, 3)
+    y_dim = round(overall_height / 2, 3)
+    z_dim = round(overall_depth / 2, 3)
 
-    bpy.ops.object.duplicate()
-    duplicatedObjects = bpy.context.selected_objects
+    if any(dim > limit for dim, limit in zip([overall_width, overall_height, overall_depth], [x_dim, y_dim, z_dim])):
+        returnMsg = f"ERROR: Model is too big for printing\nX = {x_dim}, Max is {maxX}\nY = {y_dim}, Max is {maxY}\nZ = {z_dim}, Max is {maxZ}"
 
-    for dupeObj in duplicatedObjects:
-        for modifier in dupeObj.modifiers:
-            try:
-                bpy.context.view_layer.objects.active = dupeObj
-                bpy.ops.object.modifier_apply(modifier=modifier.name)
-            except Exception as e:
-                print(f"Failed to apply modifier {modifier.name}: {e}")
-
-    bpy.context.view_layer.objects.active = duplicatedObjects[0]
-    bpy.ops.object.join()
-    joinedObject = bpy.context.selected_objects[0]
-
-    bpy.ops.object.select_all(action='DESELECT')
-    joinedObject.select_set(True)
-    bpy.context.view_layer.objects.active = joinedObject
-
-    dimensions = [round(joinedObject.dimensions.x / 2, 3), round(joinedObject.dimensions.y / 2, 3), round(joinedObject.dimensions.z / 2, 3)]
-    if any(dim > limit for dim, limit in zip(dimensions, sizeLimit)):
-        returnMsg = f"ERROR: Model is too big for printing\nX = {dimensions[0]}, Max is {sizeLimit[0]}\nY = {dimensions[1]}, Max is {sizeLimit[1]}\nZ = {dimensions[2]}, Max is {sizeLimit[2]}"
-
-    if all(dim < threshold for dim, threshold in zip(dimensions, [15, 15, 20])):
+    if all(dim < threshold for dim, threshold in zip([overall_width, overall_height, overall_depth], [15, 15, 20])):
         returnMsg = "WARNING: Model is very tiny, it probably won't be able to be seen in-game due to its size\nYour model has still been exported to Voices of the Void"
 
-    bpy.ops.object.delete(use_global=False)
     return returnMsg
 
 class ExportButton(bpy.types.Operator):
@@ -329,12 +307,10 @@ class ExportButton(bpy.types.Operator):
             "lamp_shadows": int(context.scene.lamp_shadows),
         }
         if export_mode == 'SELECTED' or (export_mode == 'INDIVIDUAL' and len(context.selected_objects) == 1):
+
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
-            if context.scene.modelname:
-                name = context.scene.modelname
-            else: 
-                name = bpy.context.active_object.name
+            name = context.scene.modelname or bpy.context.active_object.name
 
             prefixedName = f"{prefix}_{name}" if prefix else name
 
@@ -361,18 +337,8 @@ class ExportButton(bpy.types.Operator):
             
             bpy.context.view_layer.objects.active = duplicatedObjects[0]
             bpy.ops.object.join()
+
             joinedObject = bpy.context.active_object
-
-            sizeCheckReturn = sizeCheck()
-
-            if not context.scene.limitbypass:
-                sizeCheckReturn = sizeCheck()
-
-                if "ERROR" in sizeCheckReturn:
-                    self.report({'ERROR'}, sizeCheckReturn)
-                    return {"CANCELLED"}
-                elif "WARNING" in sizeCheckReturn:
-                    self.report({'ERROR'}, sizeCheckReturn)
 
             bpy.ops.object.select_all(action='DESELECT')
 
@@ -383,7 +349,20 @@ class ExportButton(bpy.types.Operator):
             
             joinedObject.select_set(True)
             bpy.context.view_layer.objects.active = joinedObject
-            
+
+            if not context.scene.limitbypass:
+                sizeCheckReturn = sizeCheck()
+
+                if "ERROR" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
+
+                    # Clean up after error
+                    bpy.ops.object.delete(use_global=False)
+
+                    return {"CANCELLED"}
+                elif "WARNING" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
+
             exportOBJ(self, object_file_path, True)
             exportOBJMaterials(joinedObject, export_folder)
 
@@ -395,6 +374,7 @@ class ExportButton(bpy.types.Operator):
             bpy.ops.object.delete(use_global=False)
 
             self.report({'INFO'}, f"Exported selected object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
+                
         elif export_mode == 'INDIVIDUAL':
 
             if not context.selected_objects:
@@ -405,6 +385,7 @@ class ExportButton(bpy.types.Operator):
 
             for object in selected_objects:
                 if object.name in bpy.context.view_layer.objects:
+
                     name = object.name
                     prefixedName = f"{prefix}_{name}" if prefix else name
 
@@ -430,6 +411,19 @@ class ExportButton(bpy.types.Operator):
                     duplicatedObject.select_set(True)
                     bpy.context.view_layer.objects.active = duplicatedObject
 
+                    if not context.scene.limitbypass:
+                        sizeCheckReturn = sizeCheck()
+
+                        if "ERROR" in sizeCheckReturn:
+                            self.report({'ERROR'}, sizeCheckReturn)
+
+                            # Clean up after error
+                            bpy.ops.object.delete(use_global=False)
+
+                            return {"CANCELLED"}
+                        elif "WARNING" in sizeCheckReturn:
+                            self.report({'ERROR'}, sizeCheckReturn)
+
                     exportOBJ(self, object_file_path, True)
                     exportOBJMaterials(duplicatedObject, export_folder)
                     save_properties_file(export_folder, properties)
@@ -438,9 +432,10 @@ class ExportButton(bpy.types.Operator):
                     duplicatedObject.select_set(True)
                     bpy.context.view_layer.objects.active = duplicatedObject
                     bpy.ops.object.delete(use_global=False)
-
                     exported_count+=1
+
             self.report({'INFO'}, f"Exported {exported_count} individual object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
+
 
         elif export_mode == 'SCENE':
             name = context.scene.modelname or bpy.context.active_object.name
@@ -478,17 +473,6 @@ class ExportButton(bpy.types.Operator):
             bpy.ops.object.join()
             joinedObject = bpy.context.active_object
 
-            sizeCheckReturn = sizeCheck()
-
-            if not context.scene.limitbypass:
-                    sizeCheckReturn = sizeCheck()
-
-                    if "ERROR" in sizeCheckReturn:
-                        self.report({'ERROR'}, sizeCheckReturn)
-                        return {"CANCELLED"}
-                    elif "WARNING" in sizeCheckReturn:
-                        self.report({'ERROR'}, sizeCheckReturn)
-
             bpy.ops.object.select_all(action='DESELECT')
 
             for collision in bpy.context.scene.objects:
@@ -498,6 +482,19 @@ class ExportButton(bpy.types.Operator):
             
             joinedObject.select_set(True)
             bpy.context.view_layer.objects.active = joinedObject
+
+            if not context.scene.limitbypass:
+                sizeCheckReturn = sizeCheck()
+
+                if "ERROR" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
+
+                    # Clean up after error
+                    bpy.ops.object.delete(use_global=False)
+
+                    return {"CANCELLED"}
+                elif "WARNING" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
             
             exportOBJ(self, object_file_path, True)
             exportOBJMaterials(joinedObject, export_folder)

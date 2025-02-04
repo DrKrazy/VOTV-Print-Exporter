@@ -43,7 +43,7 @@ def calculate_overall_bounding_box(selected_objects):
     return overall_dimensions
 
 def getSizeLimit(limitIdentifier):
-    return [100.00, 100.00, 150.00] if limitIdentifier == "FULLSIZE" else [22.50, 22.50, 30.00]
+    return (100.00, 100.00, 150.00) if limitIdentifier == "FULLSIZE" else (22.50, 22.50, 30.00)
 
 def exportOBJ(self, file_path, exportSelected):
     try:
@@ -238,40 +238,19 @@ def exportOBJMaterials(obj, exportpath):
 
 def sizeCheck():
     returnMsg = "Success: Completed"
-    sizeLimit = getSizeLimit(bpy.context.scene.sizelimit)
+    maxX, maxY, maxZ = getSizeLimit(bpy.context.scene.sizelimit)
 
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in bpy.context.scene.objects:
-        if obj.type == 'MESH' and obj.name in bpy.context.view_layer.objects:
-            obj.select_set(True)
+    overall_width, overall_height, overall_depth = calculate_overall_bounding_box(bpy.context.selected_objects)
+    x_dim = round(overall_width / 2, 3)
+    y_dim = round(overall_height / 2, 3)
+    z_dim = round(overall_depth / 2, 3)
 
-    bpy.ops.object.duplicate()
-    duplicatedObjects = bpy.context.selected_objects
+    if any(dim > limit for dim, limit in zip([overall_width, overall_height, overall_depth], [x_dim, y_dim, z_dim])):
+        returnMsg = f"ERROR: Model is too big for printing\nX = {x_dim}, Max is {maxX}\nY = {y_dim}, Max is {maxY}\nZ = {z_dim}, Max is {maxZ}"
 
-    for dupeObj in duplicatedObjects:
-        for modifier in dupeObj.modifiers:
-            try:
-                bpy.context.view_layer.objects.active = dupeObj
-                bpy.ops.object.modifier_apply(modifier=modifier.name)
-            except Exception as e:
-                print(f"Failed to apply modifier {modifier.name}: {e}")
-
-    bpy.context.view_layer.objects.active = duplicatedObjects[0]
-    bpy.ops.object.join()
-    joinedObject = bpy.context.selected_objects[0]
-
-    bpy.ops.object.select_all(action='DESELECT')
-    joinedObject.select_set(True)
-    bpy.context.view_layer.objects.active = joinedObject
-
-    dimensions = [round(joinedObject.dimensions.x / 2, 3), round(joinedObject.dimensions.y / 2, 3), round(joinedObject.dimensions.z / 2, 3)]
-    if any(dim > limit for dim, limit in zip(dimensions, sizeLimit)):
-        returnMsg = f"ERROR: Model is too big for printing\nX = {dimensions[0]}, Max is {sizeLimit[0]}\nY = {dimensions[1]}, Max is {sizeLimit[1]}\nZ = {dimensions[2]}, Max is {sizeLimit[2]}"
-
-    if all(dim < threshold for dim, threshold in zip(dimensions, [15, 15, 20])):
+    if all(dim < threshold for dim, threshold in zip([overall_width, overall_height, overall_depth], [15, 15, 20])):
         returnMsg = "WARNING: Model is very tiny, it probably won't be able to be seen in-game due to its size\nYour model has still been exported to Voices of the Void"
 
-    bpy.ops.object.delete(use_global=False)
     return returnMsg
 
 class ExportButton(bpy.types.Operator):
@@ -312,190 +291,206 @@ class ExportButton(bpy.types.Operator):
             "lamp_attenuation": context.scene.lamp_attenuation,
             "lamp_shadows": int(context.scene.lamp_shadows),
         }
-        try:
-            if export_mode == 'SELECTED' or (export_mode == 'INDIVIDUAL' and len(context.selected_objects) == 1):
-                bpy.context.view_layer.objects.active = context.selected_objects[0]
+        if export_mode == 'SELECTED' or (export_mode == 'INDIVIDUAL' and len(context.selected_objects) == 1):
 
-                if context.scene.modelname:
-                    name = context.scene.modelname
-                else: 
-                    name = bpy.context.active_object.name
+            bpy.context.view_layer.objects.active = context.selected_objects[0]
 
-                prefixedName = f"{prefix}_{name}" if prefix else name
+            name = context.scene.modelname or bpy.context.active_object.name
 
-                export_folder = os.path.join(export_path, prefixedName)
-                create_folder(self, export_folder)  # Create the folder for the scene
-                
-                object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
+            prefixedName = f"{prefix}_{name}" if prefix else name
 
-                bpy.ops.object.duplicate()
+            export_folder = os.path.join(export_path, prefixedName)
+            create_folder(self, export_folder)  # Create the folder for the scene
+            
+            object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
 
-                duplicatedObjects = context.selected_objects
+            bpy.ops.object.duplicate()
 
-                for object in duplicatedObjects:
-                    applyShapeKeys(object)
-                    for modifier in object.modifiers:
-                        try:
-                            # Apply the modifier
-                            bpy.context.view_layer.objects.active = object
-                            bpy.ops.object.modifier_apply(modifier=modifier.name)
-                        except Exception as e:
-                            print(f"Failed to apply modifier {modifier.name}: {e}")
+            duplicatedObjects = context.selected_objects
 
-                    object.select_set(True)                
-                
-                bpy.context.view_layer.objects.active = duplicatedObjects[0]
-                bpy.ops.object.join()
-                joinedObject = bpy.context.active_object
-
-                sizeCheckReturn = sizeCheck()
-
-                if not context.scene.limitbypass:
-                    sizeCheckReturn = sizeCheck()
-
-                    if "ERROR" in sizeCheckReturn:
-                        self.report({'ERROR'}, sizeCheckReturn)
-                        return {"CANCELLED"}
-                    elif "WARNING" in sizeCheckReturn:
-                        self.report({'ERROR'}, sizeCheckReturn)
-
-                bpy.ops.object.select_all(action='DESELECT')
-
-                for collision in bpy.context.scene.objects:
-                    if collision.type == 'MESH' and collision.name.startswith("UCX_") and name in collision.name and collision.name in bpy.context.view_layer.objects:
-                        collision.select_set(True)
-                        collision_count += 1
-                
-                joinedObject.select_set(True)
-                bpy.context.view_layer.objects.active = joinedObject
-                
-                exportOBJ(self, object_file_path, True)
-                exportOBJMaterials(joinedObject, export_folder)
-
-                bpy.ops.object.select_all(action='DESELECT')
-                joinedObject.select_set(True)
-
-                save_properties_file(export_folder, properties)
-
-                bpy.ops.object.delete(use_global=False)
-
-                self.report({'INFO'}, f"Exported selected object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
-            elif export_mode == 'INDIVIDUAL':
-
-                if not context.selected_objects:
-                    self.report({'ERROR'}, "No objects selected for export")
-                    return {"CANCELLED"}
-
-                selected_objects = context.selected_objects
-
-                for object in selected_objects:
-                    if object.name in bpy.context.view_layer.objects:
-                        name = object.name
-                        prefixedName = f"{prefix}_{name}" if prefix else name
-
-                        export_folder = os.path.join(export_path, prefixedName)
-                        create_folder(self, export_folder)  # Create the folder for the scene
-
-                        object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
-                        
-                        bpy.ops.object.select_all(action='DESELECT')
-                        object.select_set(True)
+            for object in duplicatedObjects:
+                applyShapeKeys(object)
+                for modifier in object.modifiers:
+                    try:
+                        # Apply the modifier
                         bpy.context.view_layer.objects.active = object
-                        bpy.ops.object.duplicate()
+                        bpy.ops.object.modifier_apply(modifier=modifier.name)
+                    except Exception as e:
+                        print(f"Failed to apply modifier {modifier.name}: {e}")
 
-                        duplicatedObject = bpy.context.active_object
+                object.select_set(True)                
+            
+            bpy.context.view_layer.objects.active = duplicatedObjects[0]
+            bpy.ops.object.join()
 
-                        bpy.ops.object.select_all(action='DESELECT')
+            joinedObject = bpy.context.active_object
 
-                        for collision in bpy.context.scene.objects:
-                            if collision.type == 'MESH' and collision.name.startswith("UCX_") and name in collision.name and collision.name in bpy.context.view_layer.objects:
-                                collision.select_set(True)
-                                collision_count += 1
-                                
-                        duplicatedObject.select_set(True)
-                        bpy.context.view_layer.objects.active = duplicatedObject
+            bpy.ops.object.select_all(action='DESELECT')
 
-                        exportOBJ(self, object_file_path, True)
-                        exportOBJMaterials(duplicatedObject, export_folder)
-                        save_properties_file(export_folder, properties)
+            for collision in bpy.context.scene.objects:
+                if collision.type == 'MESH' and collision.name.startswith("UCX_") and name in collision.name and collision.name in bpy.context.view_layer.objects:
+                    collision.select_set(True)
+                    collision_count += 1
+            
+            joinedObject.select_set(True)
+            bpy.context.view_layer.objects.active = joinedObject
 
-                        bpy.ops.object.select_all(action='DESELECT')
-                        duplicatedObject.select_set(True)
-                        bpy.context.view_layer.objects.active = duplicatedObject
-                        bpy.ops.object.delete(use_global=False)
-
-                        exported_count+=1
-                self.report({'INFO'}, f"Exported {exported_count} individual object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
-
-            elif export_mode == 'SCENE':
-                name = context.scene.modelname or bpy.context.active_object.name
-
-                prefixedName = f"{prefix}_{name}" if prefix else name
-
-                export_folder = os.path.join(export_path, prefixedName)
-                create_folder(self, export_folder)  # Create the folder for the scene
-                
-                object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
-
-
-                bpy.ops.object.select_all(action='DESELECT')
-                for obj in context.scene.objects:
-                    if obj.type == 'MESH' and not obj.name.startswith("UCX_") and obj.name in bpy.context.view_layer.objects:
-                        obj.select_set(True)
-
-                bpy.ops.object.duplicate()
-
-                duplicatedObjects = context.selected_objects
-
-                for object in duplicatedObjects:
-                    applyShapeKeys(object)
-                    for modifier in object.modifiers:
-                        try:
-                            # Apply the modifier
-                            bpy.context.view_layer.objects.active = object
-                            bpy.ops.object.modifier_apply(modifier=modifier.name)
-                        except Exception as e:
-                            print(f"Failed to apply modifier {modifier.name}: {e}")
-
-                    object.select_set(True)                
-                
-                bpy.context.view_layer.objects.active = duplicatedObjects[0]
-                bpy.ops.object.join()
-                joinedObject = bpy.context.active_object
-
+            if not context.scene.limitbypass:
                 sizeCheckReturn = sizeCheck()
 
-                if not context.scene.limitbypass:
+                if "ERROR" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
+
+                    # Clean up after error
+                    bpy.ops.object.delete(use_global=False)
+
+                    return {"CANCELLED"}
+                elif "WARNING" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
+
+            exportOBJ(self, object_file_path, True)
+            exportOBJMaterials(joinedObject, export_folder)
+
+            bpy.ops.object.select_all(action='DESELECT')
+            joinedObject.select_set(True)
+
+            save_properties_file(export_folder, properties)
+
+            bpy.ops.object.delete(use_global=False)
+
+            self.report({'INFO'}, f"Exported selected object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
+                
+        elif export_mode == 'INDIVIDUAL':
+
+            if not context.selected_objects:
+                self.report({'ERROR'}, "No objects selected for export")
+                return {"CANCELLED"}
+
+            selected_objects = context.selected_objects
+
+            for object in selected_objects:
+                if object.name in bpy.context.view_layer.objects:
+
+                    name = object.name
+                    prefixedName = f"{prefix}_{name}" if prefix else name
+
+                    export_folder = os.path.join(export_path, prefixedName)
+                    create_folder(self, export_folder)  # Create the folder for the scene
+
+                    object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
+                    
+                    bpy.ops.object.select_all(action='DESELECT')
+                    object.select_set(True)
+                    bpy.context.view_layer.objects.active = object
+                    bpy.ops.object.duplicate()
+
+                    duplicatedObject = bpy.context.active_object
+
+                    bpy.ops.object.select_all(action='DESELECT')
+
+                    for collision in bpy.context.scene.objects:
+                        if collision.type == 'MESH' and collision.name.startswith("UCX_") and name in collision.name and collision.name in bpy.context.view_layer.objects:
+                            collision.select_set(True)
+                            collision_count += 1
+                            
+                    duplicatedObject.select_set(True)
+                    bpy.context.view_layer.objects.active = duplicatedObject
+
+                    if not context.scene.limitbypass:
                         sizeCheckReturn = sizeCheck()
 
                         if "ERROR" in sizeCheckReturn:
                             self.report({'ERROR'}, sizeCheckReturn)
+
+                            # Clean up after error
+                            bpy.ops.object.delete(use_global=False)
+
                             return {"CANCELLED"}
                         elif "WARNING" in sizeCheckReturn:
                             self.report({'ERROR'}, sizeCheckReturn)
 
-                bpy.ops.object.select_all(action='DESELECT')
+                    exportOBJ(self, object_file_path, True)
+                    exportOBJMaterials(duplicatedObject, export_folder)
+                    save_properties_file(export_folder, properties)
 
-                for collision in bpy.context.scene.objects:
-                    if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name in bpy.context.view_layer.objects:
-                        collision.select_set(True)
-                        collision_count += 1
-                
-                joinedObject.select_set(True)
-                bpy.context.view_layer.objects.active = joinedObject
-                
-                exportOBJ(self, object_file_path, True)
-                exportOBJMaterials(joinedObject, export_folder)
-                save_properties_file(export_folder, properties)
+                    bpy.ops.object.select_all(action='DESELECT')
+                    duplicatedObject.select_set(True)
+                    bpy.context.view_layer.objects.active = duplicatedObject
+                    bpy.ops.object.delete(use_global=False)
+                    exported_count+=1
 
-                bpy.ops.object.select_all(action='DESELECT')
-                joinedObject.select_set(True)
-                bpy.context.view_layer.objects.active = joinedObject
-                bpy.ops.object.delete(use_global=False)
+            self.report({'INFO'}, f"Exported {exported_count} individual object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
 
-                self.report({'INFO'}, f"Exported  scene with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
-        except Exception as e:
-            self.report({'ERROR'}, f"An error occured during the export!\n{e}")
+
+        elif export_mode == 'SCENE':
+            name = context.scene.modelname or bpy.context.active_object.name
+
+            prefixedName = f"{prefix}_{name}" if prefix else name
+
+            export_folder = os.path.join(export_path, prefixedName)
+            create_folder(self, export_folder)  # Create the folder for the scene
+            
+            object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
+
+
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in context.scene.objects:
+                if obj.type == 'MESH' and not obj.name.startswith("UCX_") and obj.name in bpy.context.view_layer.objects:
+                    obj.select_set(True)
+
+            bpy.ops.object.duplicate()
+
+            duplicatedObjects = context.selected_objects
+
+            for object in duplicatedObjects:
+                applyShapeKeys(object)
+                for modifier in object.modifiers:
+                    try:
+                        # Apply the modifier
+                        bpy.context.view_layer.objects.active = object
+                        bpy.ops.object.modifier_apply(modifier=modifier.name)
+                    except Exception as e:
+                        print(f"Failed to apply modifier {modifier.name}: {e}")
+
+                object.select_set(True)                
+            
+            bpy.context.view_layer.objects.active = duplicatedObjects[0]
+            bpy.ops.object.join()
+            joinedObject = bpy.context.active_object
+
+            bpy.ops.object.select_all(action='DESELECT')
+
+            for collision in bpy.context.scene.objects:
+                if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name in bpy.context.view_layer.objects:
+                    collision.select_set(True)
+                    collision_count += 1
+            
+            joinedObject.select_set(True)
+            bpy.context.view_layer.objects.active = joinedObject
+
+            if not context.scene.limitbypass:
+                sizeCheckReturn = sizeCheck()
+
+                if "ERROR" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
+
+                    # Clean up after error
+                    bpy.ops.object.delete(use_global=False)
+
+                    return {"CANCELLED"}
+                elif "WARNING" in sizeCheckReturn:
+                    self.report({'ERROR'}, sizeCheckReturn)
+            
+            exportOBJ(self, object_file_path, True)
+            exportOBJMaterials(joinedObject, export_folder)
+            save_properties_file(export_folder, properties)
+
+            bpy.ops.object.select_all(action='DESELECT')
+            joinedObject.select_set(True)
+            bpy.context.view_layer.objects.active = joinedObject
+            bpy.ops.object.delete(use_global=False)
+
+            self.report({'INFO'}, f"Exported  scene with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
         return {"FINISHED"}
 
 class VOTVE_PT_mainGUI(bpy.types.Panel):
