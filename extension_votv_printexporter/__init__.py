@@ -115,7 +115,8 @@ class MaterialSettings(bpy.types.PropertyGroup):
             ('emissive', "Emissive", ""),
             ('PBR_roughness', "Roughness", ""),
             ('PBR_metalic', "Metalic", ""),
-            ('PBR_specular', "Specular", "")
+            ('PBR_specular', "Specular", ""),
+            ('packed', "Packed", "Pre-packed PBR texture.")
         ],
         default='diffuse'
     )  # type: ignore
@@ -218,6 +219,9 @@ def exportOBJMaterials(obj, exportpath):
                                 if setting.materialType.startswith("PBR") and setting.materialType not in existing_material_types:
                                     pbrmats.append((setting.materialType, image))
                                     existing_material_types.add(setting.materialType)
+                                elif setting.materialType == "packed" and setting.materialType not in existing_material_types:
+                                    texture_path = os.path.join(exportpath, f"pbr_{material.name}.png")
+                                    saveImage(texture_path, image)
                                 else:
                                     texture_path = os.path.join(exportpath, f"{setting.materialType}_{material.name}.png")
                                     saveImage(texture_path, image)
