@@ -486,6 +486,8 @@ class ExportButton(bpy.types.Operator):
                     self.report({'ERROR'}, sizeCheckReturn)
 
                     # Clean up after error
+                    bpy.ops.object.select_all(action='DESELECT')
+                    joinedObject.select_set(True)
                     bpy.ops.object.delete(use_global=False)
 
                     return {"CANCELLED"}
@@ -540,7 +542,8 @@ class ExportButton(bpy.types.Operator):
                     if "ERROR" in sizeCheckReturn:
                         self.report({'ERROR'}, sizeCheckReturn)
 
-                        # Clean up after error
+                        bpy.ops.object.select_all(action='DESELECT')
+                        duplicatedObject.select_set(True)
                         bpy.ops.object.delete(use_global=False)
 
                         return {"CANCELLED"}
@@ -605,6 +608,8 @@ class ExportButton(bpy.types.Operator):
                     self.report({'ERROR'}, sizeCheckReturn)
 
                     # Clean up after error
+                    bpy.ops.object.select_all(action='DESELECT')
+                    joinedObject.select_set(True)
                     bpy.ops.object.delete(use_global=False)
 
                     return {"CANCELLED"}
