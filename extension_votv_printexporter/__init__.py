@@ -28,7 +28,8 @@ def saveImage(exportpath, image):
 def exportOBJMaterials(obj, exportpath):
     for material in obj.data.materials:
         if material and material.use_nodes:
-            pbrmats = {}
+            pbrmats = []
+            existing_material_types = set()
             for node in material.node_tree.nodes:
                 if node.type == 'TEX_IMAGE' and node.image:
                     image = node.image
@@ -36,8 +37,9 @@ def exportOBJMaterials(obj, exportpath):
                     if image.size[0] > 0 and image.size[1] > 0:
                         for setting in material.material_settings:
                             if setting.imageName == imagename:
-                                if setting.materialType.startswith("PBR"):
-                                    pbrmats[setting.materialType] = image
+                                if setting.materialType.startswith("PBRCALC") and setting.materialType not in existing_material_types:
+                                    pbrmats.append((setting.materialType, image))
+                                    existing_material_types.add(setting.materialType)
                                 else:
                                     texture_path = os.path.join(exportpath, f"{setting.materialType}_{material.name}.png")
                                     saveImage(texture_path, image)
@@ -48,18 +50,22 @@ def exportOBJMaterials(obj, exportpath):
                                             saveImage(diffuse_texture_path, image)
 
             if pbrmats:
-                metallic_img = pbrmats.get("PBR_metallic")
-                roughness_img = pbrmats.get("PBR_roughness")
-                subsurface_weight_img = pbrmats.get("PBR_specular")
+                metallic_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_metallic"), None)
+                roughness_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_roughness"), None)
+                subsurface_weight_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_specular"), None)
 
                 pbrimage = combine_channels(metallic_img, roughness_img, subsurface_weight_img)
                 saveImage(os.path.join(exportpath, f"pbr_{material.name}.png"), pbrimage)
 
-def selectAll(objects, select):
+def selectAll(objects, select, type = {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}, selectUCX = False):
     bpy.ops.object.select_all(action='DESELECT')
     for obj in objects:
+        if obj.type not in type:
+            continue
+        if not selectUCX and obj.name.startswith("UCX_"):
+            continue
         obj.select_set(select)
-        
+
 def calculate_overall_bounding_box(selected_objects):
     if not selected_objects:
         return None
@@ -151,9 +157,10 @@ class MaterialSettings(bpy.types.PropertyGroup):
             ('diffuse', "Diffuse", "The main texture of the object."),
             ('normal', "Normal", ""),
             ('emissive', "Emissive", ""),
-            ('PBR_roughness', "Roughness", ""),
-            ('PBR_metalic', "Metalic", ""),
-            ('PBR_specular', "Specular", "")
+            ('pbr', 'PBR', ""),
+            ('PBRCALC_roughness', "Roughness", ""),
+            ('PBRCALC_metalic', "Metalic", ""),
+            ('PBRCALC_specular', "Specular", "")
         ],
         default='diffuse'
     )
@@ -201,7 +208,7 @@ class VOTVProperties(bpy.types.PropertyGroup):
         default='FULLSIZE'
     )
     limitbypass: bpy.props.BoolProperty(
-        name="Bypass Size Limit?",
+        name="Bypass Size Limit",
         default=False
     )
     export_mode: bpy.props.EnumProperty(
@@ -210,7 +217,7 @@ class VOTVProperties(bpy.types.PropertyGroup):
         items=[
             ('SELECTED', "Selected Objects", "Export all selected objects into one object"),
             ('INDIVIDUAL', "Individual Objects", "Export all selected objects individually"),
-            ('SCENE', "Whole Scene", "Exports the entire scene")
+            ('SCENE', "Whole Scene", "Exports the entire scene as a printable object")
         ],
         default='SELECTED'
     )
@@ -253,17 +260,11 @@ class VOTVProperties(bpy.types.PropertyGroup):
         max=1.0,
         default=(1.0, 1.0, 1.0)
     )
-    lamp_offset_x: bpy.props.FloatProperty(
-        name="Lamp Offset X",
-        default=0.0
-    )
-    lamp_offset_y: bpy.props.FloatProperty(
-        name="Lamp Offset Y",
-        default=0.0
-    )
-    lamp_offset_z: bpy.props.FloatProperty(
-        name="Lamp Offset Z",
-        default=0.0
+    lamp_offset: bpy.props.FloatVectorProperty(
+        name="Lamp Offset",
+        subtype='XYZ',
+        size=3,
+        default=(0.0, 0.0, 0.0)
     )
     lamp_intensity: bpy.props.FloatProperty(
         name="Lamp Intensity",
@@ -279,6 +280,25 @@ class VOTVProperties(bpy.types.PropertyGroup):
         name="Lamp Shadows",
         default=False
     )
+    lamp_toggle: bpy.props.BoolProperty(
+        name="Lamp Toggle",
+        default=False
+    )
+    health: bpy.props.FloatProperty(
+        name="Health (0 = Unbreakable)",
+        default=0.0,
+        min=0.0
+    )
+    impact_resistence: bpy.props.FloatProperty(
+        name="Impact resistence",
+        default=0.0,
+        min=0.0
+    )
+    damage_resistence: bpy.props.FloatProperty(
+        name="Damage resistence",
+        default=0.0,
+        min=0.0
+    )
 
 class CopyPosButton(bpy.types.Operator):
     bl_idname = "object.copy_position"
@@ -293,9 +313,9 @@ class CopyPosButton(bpy.types.Operator):
         properties = context.scene.votv_properties
         active_object = context.active_object
         if active_object:
-            properties.lamp_offset_x = active_object.location.x
-            properties.lamp_offset_y = active_object.location.y
-            properties.lamp_offset_z = active_object.location.z
+            properties.lamp_offset[0] = active_object.location.x
+            properties.lamp_offset[1] = active_object.location.y
+            properties.lamp_offset[2] = active_object.location.z
             self.report({'INFO'}, f"Copied position from {active_object.name} in lamp offset.")
             return {"FINISHED"}
         self.report({'WARNING'}, "No valid object selected.")
@@ -345,46 +365,6 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
                         mat_slot.material.material_settings.clear()
         return {"FINISHED"}
 
-def saveImage(exportpath, image):
-    try:
-        image.file_format = "PNG"
-        image.save(filepath=exportpath)
-    except Exception as e:
-        print(f"Failed to save image {exportpath}: {e}")
-
-def exportOBJMaterials(obj, exportpath):
-    for material in obj.data.materials:
-        if material and material.use_nodes:
-            pbrmats = []
-            existing_material_types = set()
-            for node in material.node_tree.nodes:
-                if node.type == 'TEX_IMAGE' and node.image:
-                    image = node.image
-                    imagename = node.label or image.name
-                    if image.size[0] > 0 and image.size[1] > 0:
-                        for setting in material.material_settings:
-                            if setting.imageName == imagename:
-                                if setting.materialType.startswith("PBR") and setting.materialType not in existing_material_types:
-                                    pbrmats.append((setting.materialType, image))
-                                    existing_material_types.add(setting.materialType)
-                                else:
-                                    texture_path = os.path.join(exportpath, f"{setting.materialType}_{material.name}.png")
-                                    saveImage(texture_path, image)
-
-                                    if setting.materialType == "emissive":
-                                        diffuse_texture_path = os.path.join(exportpath, f"diffuse_{material.name}.png")
-                                        # Check if the file already exists
-                                        if not os.path.exists(diffuse_texture_path):
-                                            saveImage(diffuse_texture_path, image)
-
-            if pbrmats:
-                metallic_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_metallic"), None)
-                roughness_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_roughness"), None)
-                subsurface_weight_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_specular"), None)
-
-                pbrimage = combine_channels(metallic_img, roughness_img, subsurface_weight_img)
-                saveImage(os.path.join(exportpath, f"pbr_{material.name}.png"), pbrimage)
-
 def sizeCheck():
     properties = bpy.context.scene.votv_properties
     returnMsg = "Success: Completed"
@@ -408,10 +388,9 @@ def converToMesh(obj):
     if obj.type not in {'CURVE', 'SURFACE', 'META', 'FONT'}:
         return
     
-    bpy.ops.object.convert(target='MESH')
-
+    
 class ExportButton(bpy.types.Operator):
-    bl_idname = "object.export_obj"
+    bl_idname = "object.export_print"
     bl_label = "Export OBJ"
     bl_description = "Export selected objects or the entire scene to OBJ format. Use the properties panel to configure export settings."
 
@@ -438,13 +417,17 @@ class ExportButton(bpy.types.Operator):
         
         properties_file = {
             "physical_material": properties.physical_material,
-            "emissive_strength": properties.emissive_strength,
+            "emissive_strength": round(properties.emissive_strength, 3),
             "is_lamp": int(properties.lamp),
             "lamp_color": f"(R={round(properties.lamp_color[0], 3)},G={round(properties.lamp_color[1], 3)},B={round(properties.lamp_color[2], 3)})",
-            "lamp_offset": f"(X={round(properties.lamp_offset_x, 3)},Y={round(properties.lamp_offset_y*-1)},Z={round(properties.lamp_offset_z, 3)})",
-            "lamp_intensity": properties.lamp_intensity,
-            "lamp_attenuation": properties.lamp_attenuation,
+            "lamp_offset": f"(X={round(properties.lamp_offset[0], 3)},Y={round(-properties.lamp_offset[1], 3)},Z={round(properties.lamp_offset[2], 3)})",
+            "lamp_intensity": round(properties.lamp_intensity, 3),
+            "lamp_attenuation": round(properties.lamp_attenuation, 3),
             "lamp_shadows": int(properties.lamp_shadows),
+            "health": round(properties.health, 3),
+            "impact_resistence": round(properties.impact_resistence, 3),
+            "damage_resistence": round(properties.damage_resistence, 3),
+            "light_toggle": int(properties.lamp_toggle)
         }
 
         if properties.export_mode == 'SELECTED' or (properties.export_mode == 'INDIVIDUAL' and len(context.selected_objects) == 1):
@@ -455,6 +438,8 @@ class ExportButton(bpy.types.Operator):
             prefixedName = f"{properties.export_prefix}_{name}" if properties.export_prefix else name
             export_folder = os.path.join(export_path, prefixedName)
             object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
+
+            selectAll(context.selected_objects, True)
 
             bpy.ops.object.duplicate()
             duplicatedObjects = context.selected_objects
@@ -472,7 +457,7 @@ class ExportButton(bpy.types.Operator):
             bpy.ops.object.select_all(action='DESELECT')
 
             for collision in bpy.context.scene.objects:
-                if collision.type == 'MESH' and collision.name.startswith("UCX_") and name in collision.name and collision.name in bpy.context.view_layer.objects:
+                if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name[4:] in name and collision.name in bpy.context.view_layer.objects:
                     collision.select_set(True)
                     collision_count += 1
             
@@ -511,28 +496,31 @@ class ExportButton(bpy.types.Operator):
                 self.report({'ERROR'}, "No objects selected for export")
                 return {"CANCELLED"}
             
-            for object in context.selected.objects:
+            for object in context.selected_objects:
                 bpy.ops.object.select_all(action='DESELECT')
                 bpy.context.view_layer.objects.active = object
+                object.select_set(True)
 
                 name = properties.modelname or bpy.context.active_object.name
                 prefixedName = f"{properties.export_prefix}_{name}" if properties.export_prefix else name
                 export_folder = os.path.join(export_path, prefixedName)
                 object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
 
+                selectAll(context.selected_objects, True)
+
                 bpy.ops.object.duplicate()
                 duplicatedObject = context.selected_objects
 
-                duplicatedObject.select_set(True)
-                converToMesh(duplicatedObject)
+                selectAll(duplicatedObject, True)
+                bpy.ops.object.convert(target='MESH')
+                duplicatedObject = bpy.context.view_layer.objects.active
+
 
                 bpy.ops.object.select_all(action='DESELECT')
-
                 for collision in bpy.context.scene.objects:
-                    if collision.type == 'MESH' and collision.name.startswith("UCX_") and name in collision.name and collision.name in bpy.context.view_layer.objects:
+                    if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name[4:] in name and collision.name in bpy.context.view_layer.objects:
                         collision.select_set(True)
                         collision_count += 1
-                
                 duplicatedObject.select_set(True)
                 bpy.context.view_layer.objects.active = duplicatedObject
 
@@ -575,6 +563,8 @@ class ExportButton(bpy.types.Operator):
             object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
 
             bpy.ops.object.select_all(action='SELECT')
+            selectAll(context.selected_objects, True)
+
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
             bpy.ops.object.duplicate()
@@ -582,7 +572,6 @@ class ExportButton(bpy.types.Operator):
 
             for object in duplicatedObjects:
                 bpy.ops.object.select_all(action='DESELECT')
-
                 object.select_set(True)
                 converToMesh(object)
             
@@ -592,13 +581,13 @@ class ExportButton(bpy.types.Operator):
 
             joinedObject = bpy.context.active_object
             bpy.ops.object.select_all(action='DESELECT')
+            joinedObject.select_set(True)
 
             for collision in bpy.context.scene.objects:
                 if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name in bpy.context.view_layer.objects:
                     collision.select_set(True)
                     collision_count += 1
             
-            joinedObject.select_set(True)
             bpy.context.view_layer.objects.active = joinedObject
 
             if not properties.limitbypass:
@@ -640,13 +629,35 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
     bl_category = "VOTV Print Exporter"
 
     def draw(self, context):
-        layout = self.layout
+        preferences = bpy.context.preferences.addons[__package__].preferences
         properties = context.scene.votv_properties
-        MainColumn = layout.column()
-        MainColumn.label(text=("Selected object(s): " + ", ".join(obj.name for obj in context.selected_objects)) if context.selected_objects else "No object selected")
 
-        dimensionRow = MainColumn.row()
-        dimensionRow.label(text="Object dimensions are:")
+        layout = self.layout
+        MainColumn = layout.column()
+
+        #MainColumn.label(text=("Selected object(s): " + ", ".join(obj.name for obj in context.selected_objects)) if context.selected_objects else "No object selected")
+        # This is used to display the currently select objects, no clue how useful it is for regular users so its disabled until further notice
+
+        qwe = MainColumn.box()
+
+        exportSettingsBox = qwe.box()
+        exportSettingsBox.label(text='Export settings:')
+
+        exportPath = exportSettingsBox.box()
+        exportPath.label(text='Export folder path:')
+        exportPath.prop(preferences, "export_path", text='')
+
+        exportSettingsBox.prop(properties, 'modelname')
+        exportSettingsBox.prop(properties, 'export_prefix')
+        exportSettingsBox.prop(properties, 'export_mode')
+
+        sizeSettingsBox = qwe.box()
+        sizeSettingsBox.label(text='Size settings:')
+
+        dimensionBox = sizeSettingsBox.box()
+        dimensionBox.label(text="Object dimensions are:")
+
+        dimensionRow = dimensionBox.row()
         
         if context.selected_objects:
             bb_x, bb_y, bb_z = calculate_overall_bounding_box(context.selected_objects)
@@ -660,18 +671,12 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
         dimensionRow.box().label(text=f"Y={y_dim}")
         dimensionRow.box().label(text=f"Z={z_dim}")
 
-        MainColumn.separator()
-        MainColumn.prop(properties, 'modelname')
-        MainColumn.prop(properties, 'export_prefix')
-        MainColumn.prop(properties, 'export_mode')
-        MainColumn.separator()
-        MainColumn.prop(properties, 'sizelimit')
-        MainColumn.prop(properties, 'limitbypass')
+        sizeSettingsBox.prop(properties, 'sizelimit')
+        sizeSettingsBox.prop(properties, 'limitbypass')
         
-        MainColumn.separator()
-        rowExport = MainColumn.row()
+        rowExport = qwe.row()
+        rowExport.scale_y = 2
         rowExport.operator(ExportButton.bl_idname, text="Export Objects")
-        rowExport.enabled = bool(properties.modelname or len(context.selected.objects) > 0)
 
 class VOTVE_PT_properties(bpy.types.Panel):
     bl_label = "Properties:"
@@ -684,25 +689,30 @@ class VOTVE_PT_properties(bpy.types.Panel):
     def draw (self, context):
         properties = context.scene.votv_properties
 
-        layout = self.layout
+        layout = self.layout.box()
+        
+        layout.prop(properties, "health")
+        layout.prop(properties, "damage_resistence")
+        layout.prop(properties, "impact_resistence")
+        
         layout.prop(properties, "physical_material")
         layout.prop(properties, "emissive_strength")
 
         propertiesBox = layout.box()
         propertiesBox.label(text="Materials:")
-        materialsBox = propertiesBox.box()
 
         selected_objects = context.selected_objects
         curMats = set()
 
         if selected_objects:
+            materialsBox = propertiesBox.box()
             for obj in selected_objects:
-                if obj.type == 'MESH':
+                if obj.type == 'MESH' and len(obj.material_slots) > 0:
                     for mat_slot in obj.material_slots:
                         if mat_slot.material:
                             material_settings = mat_slot.material.material_settings
                             if not material_settings:
-                                break
+                                continue
                             
                             if mat_slot.material.name not in curMats:
                                 curMats.add(mat_slot.material.name)
@@ -710,11 +720,10 @@ class VOTVE_PT_properties(bpy.types.Panel):
                                 box.label(text=f"{mat_slot.material.name}:")
                                 for setting in material_settings:
                                     materialRow = box.row()
+                                    
                                     materialRow.label(text=setting.imageName)
                                     materialRow.prop(setting, "materialType", text="Type")
                                     materialRow.prop(setting, "materialFilter", text="Filter")
-        else:
-            materialsBox.row().label(text="No object selected.")
 
         matButtonRow = propertiesBox.row()
         matButtonRow.operator("material.update_settings", text="Update materials")
@@ -730,24 +739,22 @@ class VOTVE_PT_lightProperties(bpy.types.Panel):
 
     def draw(self, context):
         properties = context.scene.votv_properties
-        layout = self.layout
+        layout = self.layout.box()
         layout.prop(properties, 'lamp', text="Enable Light")
 
         lampBox = layout.box()   
         lampBox.enabled = properties.lamp
 
-        colorRow = lampBox.row()
-        colorRow.prop(properties, 'lamp_color', text="Light Color:")
+        lampBox.prop(properties, 'lamp_toggle', text="Light toggle")
+        lampBox.row().prop(properties, 'lamp_color', text="Light Color:")
 
         dimensionRow = lampBox.row()
         dimensionRow.label(text="Light Offset:")
-        button = dimensionRow.column()
-        button.operator(CopyPosButton.bl_idname, text="Copy Position to:")
-        button.enabled = bool(context.selected_objects)
 
-        dimensionRow.prop(properties, 'lamp_offset_x', text="X")
-        dimensionRow.prop(properties, 'lamp_offset_y', text="Y")
-        dimensionRow.prop(properties, 'lamp_offset_z', text="Z")
+        dimensionRow.operator(CopyPosButton.bl_idname, text="Copy Position to:")
+        dimensionRow.enabled = bool(context.selected_objects)
+
+        dimensionRow.prop(properties, 'lamp_offset', text="")
 
         lampBox.prop(properties, 'lamp_intensity', text="Light Intensity:")
         lampBox.prop(properties, 'lamp_attenuation', text="Light Attenuation:")
