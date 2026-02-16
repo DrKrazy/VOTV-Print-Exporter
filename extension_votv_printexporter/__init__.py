@@ -1,5 +1,3 @@
-# type: ignore
-
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3 of the License, or
@@ -17,6 +15,10 @@ import bpy
 import os
 import mathutils
 import numpy as np
+
+#
+# Function Used
+#
 
 def saveImage(exportpath, image):
     try:
@@ -134,24 +136,46 @@ def combine_channels(metallic_img=None, roughness_img=None, specular_img=None):
 
     combined_pixels = np.zeros((width * height * 4,), dtype=np.float32)
     combined_pixels[0::4] = metallic_pixels[0::4]  # Red channel
-    combined_pixels[1::4] = subsurface_weight_pixels[1::4]  # Green channel
+    combined_pixels[1::4] = -subsurface_weight_pixels[1::4]  # Green channel
     combined_pixels[2::4] = roughness_pixels[2::4]  # Blue channel
     combined_pixels[3::4] = 1.0  # Alpha channel (fully opaque)
 
     combined_img.pixels = combined_pixels.tolist()
     return combined_img
 
+def sizeCheck():
+    properties = bpy.context.scene.votv_properties
+    returnMsg = "Success: Completed"
+    maxX, maxY, maxZ = getSizeLimit(properties.sizelimit)
+
+    bb_x, bb_y, bb_z = calculate_overall_bounding_box(bpy.context.selected_objects)
+    
+    x_dim = round(bb_x / 2, 3)
+    y_dim = round(bb_y / 2, 3)
+    z_dim = round(bb_z / 2, 3)
+
+    if any(dim > limit for dim, limit in zip([x_dim, y_dim, z_dim], [maxX, maxY, maxZ])):
+        returnMsg = f"ERROR: Model is too big for printing\n X = {x_dim}, Max is {maxX}\nY = {y_dim}, Max is {maxY}\nZ = {z_dim}, Max is {maxZ}"
+
+    if all(dim < threshold for dim, threshold in zip([x_dim, y_dim, z_dim], [10, 10, 15])):
+        returnMsg = "WARNING: Model is very tiny, it probably won't be able to be seen in-game due to its size\nYour model has still been exported to Voices of the Void"
+
+    return returnMsg   
+
 #
 # Classes
 #
+
 class MaterialSettings(bpy.types.PropertyGroup):
-    image: bpy.props.PointerProperty(
+
+
+    image : bpy.props.PointerProperty(
         name="Image",
         type=bpy.types.Image,
         description="The image to be used for the material."
     )
-    imageName: bpy.props.StringProperty(name="Image name", default="imageName")
-    materialType: bpy.props.EnumProperty(
+    imageName : bpy.props.StringProperty(name="Image name", default="imageName")
+    materialType : bpy.props.EnumProperty(
         name="Type",
         items=[
             ('diffuse', "Diffuse", "The main texture of the object."),
@@ -164,7 +188,7 @@ class MaterialSettings(bpy.types.PropertyGroup):
         ],
         default='diffuse'
     )
-    materialFilter: bpy.props.EnumProperty(
+    materialFilter : bpy.props.EnumProperty(
         name="Filter",
         items=[
             ('0', "Nearest", ""),
@@ -176,7 +200,7 @@ class MaterialSettings(bpy.types.PropertyGroup):
 class VOTVExporterPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
-    export_path: bpy.props.StringProperty(
+    export_path : bpy.props.StringProperty(
         name="Export Path",
         default="",
         description="Define the default export path",
@@ -188,17 +212,17 @@ class VOTVExporterPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "export_path")
 
 class VOTVProperties(bpy.types.PropertyGroup):
-    modelname: bpy.props.StringProperty(
+    modelname : bpy.props.StringProperty(
         name="Model name",
         default="",
         description="This will be your file name.\nWARNING: If exporting multiple objects it will instead use the object name rather than the file name."
     )
-    export_prefix: bpy.props.StringProperty(
+    export_prefix : bpy.props.StringProperty(
         name="Export Prefix (Not required)",
         default="",
         description="Define a prefix for the exported OBJ file names"
     )
-    sizelimit: bpy.props.EnumProperty(
+    sizelimit : bpy.props.EnumProperty(
         name="Size Limit",
         description="Choose for which printer you want your object to print from",
         items=[
@@ -207,11 +231,11 @@ class VOTVProperties(bpy.types.PropertyGroup):
         ],
         default='FULLSIZE'
     )
-    limitbypass: bpy.props.BoolProperty(
+    limitbypass : bpy.props.BoolProperty(
         name="Bypass Size Limit",
         default=False
     )
-    export_mode: bpy.props.EnumProperty(
+    export_mode : bpy.props.EnumProperty(
         name="Export Mode",
         description="Choose how to export the objects",
         items=[
@@ -221,7 +245,7 @@ class VOTVProperties(bpy.types.PropertyGroup):
         ],
         default='SELECTED'
     )
-    physical_material: bpy.props.EnumProperty(
+    physical_material : bpy.props.EnumProperty(
         name="Physical Material",
         items=[
             ('0', "Default", ""),
@@ -243,16 +267,16 @@ class VOTVProperties(bpy.types.PropertyGroup):
         ],
         default='0'
     )
-    emissive_strength: bpy.props.FloatProperty(
+    emissive_strength : bpy.props.FloatProperty(
         name="Emissive Strength",
         default=0.0,
         min=0.0
     )
-    lamp: bpy.props.BoolProperty(
+    lamp : bpy.props.BoolProperty(
         name="Lamp",
         default=False
     )
-    lamp_color: bpy.props.FloatVectorProperty(
+    lamp_color : bpy.props.FloatVectorProperty(
         name="Lamp Color",
         subtype='COLOR',
         size=3,
@@ -260,42 +284,42 @@ class VOTVProperties(bpy.types.PropertyGroup):
         max=1.0,
         default=(1.0, 1.0, 1.0)
     )
-    lamp_offset: bpy.props.FloatVectorProperty(
+    lamp_offset : bpy.props.FloatVectorProperty(
         name="Lamp Offset",
         subtype='XYZ',
         size=3,
         default=(0.0, 0.0, 0.0)
     )
-    lamp_intensity: bpy.props.FloatProperty(
+    lamp_intensity : bpy.props.FloatProperty(
         name="Lamp Intensity",
         default=5000,
         min=0.0
     )
-    lamp_attenuation: bpy.props.FloatProperty(
+    lamp_attenuation : bpy.props.FloatProperty(
         name="Lamp Attenuation",
         default=2500,
         min=0.0
     )
-    lamp_shadows: bpy.props.BoolProperty(
+    lamp_shadows : bpy.props.BoolProperty(
         name="Lamp Shadows",
         default=False
     )
-    lamp_toggle: bpy.props.BoolProperty(
+    lamp_toggle : bpy.props.BoolProperty(
         name="Lamp Toggle",
         default=False
     )
-    health: bpy.props.FloatProperty(
+    health : bpy.props.FloatProperty(
         name="Health (0 = Unbreakable)",
         default=0.0,
         min=0.0
     )
-    impact_resistence: bpy.props.FloatProperty(
-        name="Impact resistence",
+    impact_resistance : bpy.props.FloatProperty(
+        name="Impact resistance",
         default=0.0,
         min=0.0
     )
-    damage_resistence: bpy.props.FloatProperty(
-        name="Damage resistence",
+    damage_resistance : bpy.props.FloatProperty(
+        name="Damage resistance",
         default=0.0,
         min=0.0
     )
@@ -364,31 +388,11 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
                     if mat_slot.material:
                         mat_slot.material.material_settings.clear()
         return {"FINISHED"}
-
-def sizeCheck():
-    properties = bpy.context.scene.votv_properties
-    returnMsg = "Success: Completed"
-    maxX, maxY, maxZ = getSizeLimit(properties.sizelimit)
-
-    bb_x, bb_y, bb_z = calculate_overall_bounding_box(bpy.context.selected_objects)
     
-    x_dim = round(bb_x / 2, 3)
-    y_dim = round(bb_y / 2, 3)
-    z_dim = round(bb_z / 2, 3)
+#
+# Main Export Function
+#
 
-    if any(dim > limit for dim, limit in zip([x_dim, y_dim, z_dim], [maxX, maxY, maxZ])):
-        returnMsg = f"ERROR: Model is too big for printing\n X = {x_dim}, Max is {maxX}\nY = {y_dim}, Max is {maxY}\nZ = {z_dim}, Max is {maxZ}"
-
-    if all(dim < threshold for dim, threshold in zip([x_dim, y_dim, z_dim], [10, 10, 15])):
-        returnMsg = "WARNING: Model is very tiny, it probably won't be able to be seen in-game due to its size\nYour model has still been exported to Voices of the Void"
-
-    return returnMsg
-
-def converToMesh(obj):   
-    if obj.type not in {'CURVE', 'SURFACE', 'META', 'FONT'}:
-        return
-    
-    
 class ExportButton(bpy.types.Operator):
     bl_idname = "object.export_print"
     bl_label = "Export OBJ"
@@ -396,12 +400,12 @@ class ExportButton(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.selected_objects and context.mode == 'OBJECT'
+        return (context.selected_objects and context.mode == 'OBJECT') or len(context.scene.votv_properties.modelname) > 0
 
     def execute(self, context):
+        properties = context.scene.votv_properties
         preferences = bpy.context.preferences.addons[__package__].preferences
         export_path = bpy.path.abspath(preferences.export_path)
-        properties = context.scene.votv_properties
 
         if not export_path:
             self.report({'ERROR'}, "Export path is not set.")
@@ -425,8 +429,8 @@ class ExportButton(bpy.types.Operator):
             "lamp_attenuation": round(properties.lamp_attenuation, 3),
             "lamp_shadows": int(properties.lamp_shadows),
             "health": round(properties.health, 3),
-            "impact_resistence": round(properties.impact_resistence, 3),
-            "damage_resistence": round(properties.damage_resistence, 3),
+            "impact_resistance": round(properties.impact_resistance, 3),
+            "damage_resistance": round(properties.damage_resistance, 3),
             "light_toggle": int(properties.lamp_toggle)
         }
 
@@ -444,12 +448,10 @@ class ExportButton(bpy.types.Operator):
             bpy.ops.object.duplicate()
             duplicatedObjects = context.selected_objects
 
-            for object in duplicatedObjects:
-                bpy.ops.object.select_all(action='DESELECT')
-                object.select_set(True)
-                converToMesh(object)
-            
+            bpy.ops.object.select_all(action='DESELECT')
             selectAll(duplicatedObjects, True)
+            bpy.ops.object.convert(target='MESH')
+
             bpy.context.view_layer.objects.active = duplicatedObjects[0]
             bpy.ops.object.join()
 
@@ -547,6 +549,8 @@ class ExportButton(bpy.types.Operator):
                 duplicatedObject.select_set(True)
                 bpy.ops.object.delete(use_global=False)
 
+                exported_count+=        1
+
             self.report({'INFO'}, f"Exported {exported_count} individual object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
 
 
@@ -570,12 +574,8 @@ class ExportButton(bpy.types.Operator):
             bpy.ops.object.duplicate()
             duplicatedObjects = context.selected_objects
 
-            for object in duplicatedObjects:
-                bpy.ops.object.select_all(action='DESELECT')
-                object.select_set(True)
-                converToMesh(object)
-            
             selectAll(duplicatedObjects, True)
+            bpy.ops.object.convert(target='MESH')
             bpy.context.view_layer.objects.active = duplicatedObjects[0]
             bpy.ops.object.join()
 
@@ -621,6 +621,7 @@ class ExportButton(bpy.types.Operator):
 #
 # Main GUI
 #
+
 class VOTVE_PT_mainGUI(bpy.types.Panel):
     bl_label = "VOTV Print Exporter"
     bl_idname = "VOTVE_PT_mainGUI"
@@ -633,14 +634,13 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
         properties = context.scene.votv_properties
 
         layout = self.layout
-        MainColumn = layout.column()
 
         #MainColumn.label(text=("Selected object(s): " + ", ".join(obj.name for obj in context.selected_objects)) if context.selected_objects else "No object selected")
         # This is used to display the currently select objects, no clue how useful it is for regular users so its disabled until further notice
 
-        qwe = MainColumn.box()
+        MainColumn = layout.box().column()
 
-        exportSettingsBox = qwe.box()
+        exportSettingsBox = MainColumn.box()
         exportSettingsBox.label(text='Export settings:')
 
         exportPath = exportSettingsBox.box()
@@ -651,7 +651,7 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
         exportSettingsBox.prop(properties, 'export_prefix')
         exportSettingsBox.prop(properties, 'export_mode')
 
-        sizeSettingsBox = qwe.box()
+        sizeSettingsBox = MainColumn.box()
         sizeSettingsBox.label(text='Size settings:')
 
         dimensionBox = sizeSettingsBox.box()
@@ -671,41 +671,28 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
         dimensionRow.box().label(text=f"Y={y_dim}")
         dimensionRow.box().label(text=f"Z={z_dim}")
 
-        sizeSettingsBox.prop(properties, 'sizelimit')
+        sizeLimitBox = sizeSettingsBox.box()
+        sizeLimit = getSizeLimit(properties.sizelimit)
+
+        sizeLimitBox.prop(properties, 'sizelimit')
+
+        sizeSettingsRow = sizeLimitBox.row()
+        sizeSettingsRow.box().label(text=f"X={sizeLimit[0]}")
+        sizeSettingsRow.box().label(text=f"Y={sizeLimit[1]}")
+        sizeSettingsRow.box().label(text=f"Z={sizeLimit[2]}")
         sizeSettingsBox.prop(properties, 'limitbypass')
+
+        materialsSettingsBox = MainColumn.box()
+        materialsSettingsBox.label(text="Material settings:")
+        materialsSettingsBox.prop(properties, "emissive_strength")
         
-        rowExport = qwe.row()
-        rowExport.scale_y = 2
-        rowExport.operator(ExportButton.bl_idname, text="Export Objects")
-
-class VOTVE_PT_properties(bpy.types.Panel):
-    bl_label = "Properties:"
-    bl_parent_id = "VOTVE_PT_mainGUI"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "VOTV Print Exporter"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw (self, context):
-        properties = context.scene.votv_properties
-
-        layout = self.layout.box()
-        
-        layout.prop(properties, "health")
-        layout.prop(properties, "damage_resistence")
-        layout.prop(properties, "impact_resistence")
-        
-        layout.prop(properties, "physical_material")
-        layout.prop(properties, "emissive_strength")
-
-        propertiesBox = layout.box()
-        propertiesBox.label(text="Materials:")
-
         selected_objects = context.selected_objects
         curMats = set()
+        
+        materialsBox = materialsSettingsBox.box()
 
         if selected_objects:
-            materialsBox = propertiesBox.box()
+            materialsBox.label(text="Materials:")
             for obj in selected_objects:
                 if obj.type == 'MESH' and len(obj.material_slots) > 0:
                     for mat_slot in obj.material_slots:
@@ -724,10 +711,35 @@ class VOTVE_PT_properties(bpy.types.Panel):
                                     materialRow.label(text=setting.imageName)
                                     materialRow.prop(setting, "materialType", text="Type")
                                     materialRow.prop(setting, "materialFilter", text="Filter")
+            
+        else:
+            materialsBox.label(text="Please select an object to see its material list")
 
-        matButtonRow = propertiesBox.row()
+        matButtonRow = materialsSettingsBox.box().row()
         matButtonRow.operator("material.update_settings", text="Update materials")
         matButtonRow.operator("material.clear_settings", text="Clear materials")
+        
+        rowExport = MainColumn.row()
+        rowExport.scale_y = 2
+        rowExport.operator(ExportButton.bl_idname, text="Export Objects")
+
+class VOTVE_PT_properties(bpy.types.Panel):
+    bl_label = "Properties:"
+    bl_parent_id = "VOTVE_PT_mainGUI"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "VOTV Print Exporter"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw (self, context):
+        properties = context.scene.votv_properties
+
+        layout = self.layout.box()
+        
+        layout.prop(properties, "health")
+        layout.prop(properties, "damage_resistance")
+        layout.prop(properties, "impact_resistance")
+        layout.prop(properties, "physical_material")
 
 class VOTVE_PT_lightProperties(bpy.types.Panel):
     bl_label = "Light settings:"
@@ -758,7 +770,7 @@ class VOTVE_PT_lightProperties(bpy.types.Panel):
 
         lampBox.prop(properties, 'lamp_intensity', text="Light Intensity:")
         lampBox.prop(properties, 'lamp_attenuation', text="Light Attenuation:")
-        lampBox.prop(properties, 'lamp_shadows', text="Light Shadows:")
+        lampBox.prop(properties, 'lamp_shadows', text="Light Shadows")
 
 classes = (VOTVExporterPreferences, VOTVProperties, MaterialSettings, ExportButton, VOTVE_PT_mainGUI, VOTVE_PT_properties, VOTVE_PT_lightProperties, CopyPosButton, UpdateMaterialSettingsOperator, ClearMaterialSettingsOperator)
 
