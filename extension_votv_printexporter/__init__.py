@@ -32,24 +32,27 @@ def exportOBJMaterials(obj, exportpath):
         if material and material.use_nodes:
             pbrmats = []
             existing_material_types = set()
+
             for node in material.node_tree.nodes:
-                if node.type == 'TEX_IMAGE' and node.image:
+                if node.type == 'TEX_IMAGE' and node.image:            
                     image = node.image
                     imagename = node.label or image.name
-                    if image.size[0] > 0 and image.size[1] > 0:
-                        for setting in material.material_settings:
-                            if setting.imageName == imagename:
-                                if setting.materialType.startswith("PBRCALC") and setting.materialType not in existing_material_types:
-                                    pbrmats.append((setting.materialType, image))
-                                    existing_material_types.add(setting.materialType)
-                                else:
-                                    texture_path = os.path.join(exportpath, f"{setting.materialType}_{material.name}.png")
-                                    saveImage(texture_path, image)
 
-                                    if setting.materialType == "emissive":
-                                        diffuse_texture_path = os.path.join(exportpath, f"diffuse_{material.name}.png")
-                                        if not os.path.exists(diffuse_texture_path):
-                                            saveImage(diffuse_texture_path, image)
+                    for setting in material.material_settings:
+                        if setting.imageName != imagename or image.size[0] < 0 or image.size[1] < 0 or setting.materialType == "noexport":
+                            continue
+
+                        if setting.materialType.startswith("PBRCALC") and setting.materialType not in existing_material_types:
+                            pbrmats.append((setting.materialType, image))
+                            existing_material_types.add(setting.materialType)
+                        else:
+                            texture_path = os.path.join(exportpath, f"{setting.materialType}_{material.name}.png")
+                            saveImage(texture_path, image)
+
+                            if setting.materialType == "emissive":
+                                diffuse_texture_path = os.path.join(exportpath, f"diffuse_{material.name}.png")
+                                if not os.path.exists(diffuse_texture_path):
+                                    saveImage(diffuse_texture_path, image)
 
             if pbrmats:
                 metallic_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_metallic"), None)
@@ -136,7 +139,7 @@ def combine_channels(metallic_img=None, roughness_img=None, specular_img=None):
 
     combined_pixels = np.zeros((width * height * 4,), dtype=np.float32)
     combined_pixels[0::4] = metallic_pixels[0::4]  # Red channel
-    combined_pixels[1::4] = -subsurface_weight_pixels[1::4]  # Green channel
+    combined_pixels[1::4] = subsurface_weight_pixels[1::4]  # Green channel
     combined_pixels[2::4] = roughness_pixels[2::4]  # Blue channel
     combined_pixels[3::4] = 1.0  # Alpha channel (fully opaque)
 
@@ -178,6 +181,7 @@ class MaterialSettings(bpy.types.PropertyGroup):
     materialType : bpy.props.EnumProperty(
         name="Type",
         items=[
+            ('noexport', "None", "This won't export a texture"),
             ('diffuse', "Diffuse", "The main texture of the object."),
             ('normal', "Normal", ""),
             ('emissive', "Emissive", ""),
@@ -269,8 +273,15 @@ class VOTVProperties(bpy.types.PropertyGroup):
     )
     emissive_strength : bpy.props.FloatProperty(
         name="Emissive Strength",
+        description="Strength of the emissive texture",
         default=0.0,
         min=0.0
+    )
+    # Will be added later on
+    normal_invert_green : bpy.props.BoolProperty(
+        name="Normal: Invert green channel",
+        description="Use if your normals look weird, inverts the green channel of the exported normals",
+        default=False
     )
     lamp : bpy.props.BoolProperty(
         name="Lamp",
@@ -685,6 +696,8 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
         materialsSettingsBox = MainColumn.box()
         materialsSettingsBox.label(text="Material settings:")
         materialsSettingsBox.prop(properties, "emissive_strength")
+        # materialsSettingsBox.prop(properties, "normal_invert_green")
+        # Will be properly added later
         
         selected_objects = context.selected_objects
         curMats = set()
