@@ -20,6 +20,11 @@ import numpy as np
 # Function Used
 #
 
+sizeLimits = {
+    "FULLSIZE": [100.00, 100.00, 150.00],
+    "DESKTOP": [22.50, 22.50, 30.00]
+}
+
 def saveImage(exportpath, image):
     try:
         image.file_format = "PNG"
@@ -28,39 +33,36 @@ def saveImage(exportpath, image):
         print(f"Failed to save image {exportpath}: {e}")
 
 def exportOBJMaterials(obj, exportpath):
+    if not obj or not obj.data or not hasattr(obj.data, "materials"):
+        return
+
     for material in obj.data.materials:
-        if material and material.use_nodes:
-            pbrmats = []
-            existing_material_types = set()
+        if not material or not material.use_nodes:
+            continue
 
-            for node in material.node_tree.nodes:
-                if node.type == 'TEX_IMAGE' and node.image:            
-                    image = node.image
-                    imagename = node.label or image.name
+        existing_material_types = set()
 
-                    for setting in material.material_settings:
-                        if setting.imageName != imagename or image.size[0] < 0 or image.size[1] < 0 or setting.materialType == "noexport":
-                            continue
+        for node in material.node_tree.nodes:
+            if node.type == 'TEX_IMAGE' and node.image:            
+                image = node.image
+                imagename = node.label or image.name
 
-                        if setting.materialType.startswith("PBRCALC") and setting.materialType not in existing_material_types:
-                            pbrmats.append((setting.materialType, image))
-                            existing_material_types.add(setting.materialType)
-                        else:
-                            texture_path = os.path.join(exportpath, f"{setting.materialType}_{material.name}.png")
-                            saveImage(texture_path, image)
+                settings = material.material_settings
 
-                            if setting.materialType == "emissive":
-                                diffuse_texture_path = os.path.join(exportpath, f"diffuse_{material.name}.png")
-                                if not os.path.exists(diffuse_texture_path):
-                                    saveImage(diffuse_texture_path, image)
+                if not settings:
+                    continue
 
-            if pbrmats:
-                metallic_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_metallic"), None)
-                roughness_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_roughness"), None)
-                subsurface_weight_img = next((img for mat_type, img in pbrmats if mat_type == "PBR_specular"), None)
+                for setting in settings:
+                    if setting.imageName != imagename or image.size[0] <= 0 or image.size[1] <= 0 or setting.materialType == "noexport":
+                        continue
 
-                pbrimage = combine_channels(metallic_img, roughness_img, subsurface_weight_img)
-                saveImage(os.path.join(exportpath, f"pbr_{material.name}.png"), pbrimage)
+                    saveImage(os.path.join(exportpath, f"{setting.materialType}_{material.name}.png"), image)
+
+                    if setting.materialType == "emissive":
+                        diffuse_texture_path = os.path.join(exportpath, f"diffuse_{material.name}.png")
+
+                        if not os.path.exists(diffuse_texture_path):
+                            saveImage(diffuse_texture_path, image)
 
 def selectAll(objects, select, type = {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}, selectUCX = False):
     bpy.ops.object.select_all(action='DESELECT')
@@ -92,9 +94,6 @@ def calculate_overall_bounding_box(selected_objects):
     overall_dimensions = (max_bound.x - min_bound.x, max_bound.y - min_bound.y, max_bound.z - min_bound.z)
     return overall_dimensions
 
-def getSizeLimit(limitIdentifier):
-    return [100.00, 100.00, 150.00] if limitIdentifier == "FULLSIZE" else [22.50, 22.50, 30.00]
-
 def exportOBJ(self, file_path, exportSelected):
     try:
         export_func = bpy.ops.wm.obj_export if bpy.app.version >= (4, 0, 0) else bpy.ops.export_scene.obj
@@ -112,44 +111,28 @@ def create_folder(self, folder_path):
 def save_properties_file(export_path, properties):
     properties_file_path = os.path.join(export_path, "properties.cfg")
     with open(properties_file_path, 'w') as f:
+
+        # Texture properties
         for obj in bpy.context.selected_objects:
-            if obj.type == 'MESH':
-                for mat_slot in obj.material_slots:
-                    if mat_slot.material:
-                        for setting in mat_slot.material.material_settings:
-                            f.write(f"filter_{setting.materialType}_{mat_slot.material.name}={setting.materialFilter}\n")
+            if obj.type != 'MESH':
+                continue
+
+            for mat_slot in obj.material_slots:
+                if not mat_slot.material:
+                    continue
+
+                for setting in mat_slot.material.material_settings:
+                    f.write(f"filter_{setting.materialType}_{mat_slot.material.name}={setting.materialFilter}\n")
+
+        # Misc properties
         for key, value in properties.items():
             if value is not None:
                 f.write(f"{key}={value}\n")
 
-def combine_channels(metallic_img=None, roughness_img=None, specular_img=None):
-    if metallic_img:
-        width, height = metallic_img.size
-    elif roughness_img:
-        width, height = roughness_img.size
-    elif specular_img:
-        width, height = specular_img.size
-    else:
-        return {"CANCELLED"}
-
-    combined_img = bpy.data.images.new('CombinedImage', width=width, height=height)
-    metallic_pixels = np.array(metallic_img.pixels[:]) if metallic_img else np.zeros((width * height * 4,), dtype=np.float32)
-    roughness_pixels = np.array(roughness_img.pixels[:]) if roughness_img else np.zeros((width * height * 4,), dtype=np.float32)
-    subsurface_weight_pixels = np.array(specular_img.pixels[:]) if specular_img else np.zeros((width * height * 4,), dtype=np.float32)
-
-    combined_pixels = np.zeros((width * height * 4,), dtype=np.float32)
-    combined_pixels[0::4] = metallic_pixels[0::4]  # Red channel
-    combined_pixels[1::4] = subsurface_weight_pixels[1::4]  # Green channel
-    combined_pixels[2::4] = roughness_pixels[2::4]  # Blue channel
-    combined_pixels[3::4] = 1.0  # Alpha channel (fully opaque)
-
-    combined_img.pixels = combined_pixels.tolist()
-    return combined_img
-
 def sizeCheck():
     properties = bpy.context.scene.votv_properties
     returnMsg = "Success: Completed"
-    maxX, maxY, maxZ = getSizeLimit(properties.sizelimit)
+    maxX, maxY, maxZ = sizeLimits[properties.sizelimit]
 
     bb_x, bb_y, bb_z = calculate_overall_bounding_box(bpy.context.selected_objects)
     
@@ -170,8 +153,6 @@ def sizeCheck():
 #
 
 class MaterialSettings(bpy.types.PropertyGroup):
-
-
     image : bpy.props.PointerProperty(
         name="Image",
         type=bpy.types.Image,
@@ -186,9 +167,6 @@ class MaterialSettings(bpy.types.PropertyGroup):
             ('normal', "Normal", ""),
             ('emissive', "Emissive", ""),
             ('pbr', 'PBR', ""),
-            ('PBRCALC_roughness', "Roughness", ""),
-            ('PBRCALC_metalic', "Metalic", ""),
-            ('PBRCALC_specular', "Specular", "")
         ],
         default='diffuse'
     )
@@ -347,12 +325,14 @@ class CopyPosButton(bpy.types.Operator):
     def execute(self, context):
         properties = context.scene.votv_properties
         active_object = context.active_object
+
         if active_object:
             properties.lamp_offset[0] = active_object.location.x
             properties.lamp_offset[1] = active_object.location.y
             properties.lamp_offset[2] = active_object.location.z
             self.report({'INFO'}, f"Copied position from {active_object.name} in lamp offset.")
             return {"FINISHED"}
+
         self.report({'WARNING'}, "No valid object selected.")
         return {"CANCELLED"}
 
@@ -366,21 +346,26 @@ class UpdateMaterialSettingsOperator(bpy.types.Operator):
 
     def execute(self, context):
         for obj in context.selected_objects:
-            if obj.type == 'MESH':
-                for mat_slot in obj.material_slots:
-                    if mat_slot.material:
-                        material = mat_slot.material
-                        if "material_settings" not in material:
-                            material["material_settings"] = bpy.props.CollectionProperty(type=MaterialSettings)()
+            if obj.type != 'MESH':
+                continue
+               
+            for mat_slot in obj.material_slots:
+                if not mat_slot.material:
+                    continue
 
-                        for node in material.node_tree.nodes:
-                            if node.type == 'TEX_IMAGE' and node.image:
-                                imagename = node.label or node.image.name
-                                exists = any(setting.image == node.image for setting in material.material_settings)
-                                if not exists:
-                                    new_setting = material.material_settings.add()
-                                    new_setting.image = node.image
-                                    new_setting.imageName = imagename
+                material = mat_slot.material
+                if "material_settings" not in material:
+                    material["material_settings"] = bpy.props.CollectionProperty(type=MaterialSettings)()
+
+                for node in material.node_tree.nodes:
+                    if node.type == 'TEX_IMAGE' and node.image:
+                        imagename = node.label or node.image.name
+                        exists = any(setting.image == node.image for setting in material.material_settings)
+
+                        if not exists:
+                            new_setting = material.material_settings.add()
+                            new_setting.image = node.image
+                            new_setting.imageName = imagename
 
         return {"FINISHED"}
 
@@ -646,146 +631,136 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
 
         layout = self.layout
 
-        #MainColumn.label(text=("Selected object(s): " + ", ".join(obj.name for obj in context.selected_objects)) if context.selected_objects else "No object selected")
-        # This is used to display the currently select objects, no clue how useful it is for regular users so its disabled until further notice
+        MainColumn = layout.box()
 
-        MainColumn = layout.box().column()
+        exportSettingsBox, epanel = MainColumn.box().panel("export_settings", default_closed=False)
+        exportSettingsBox.label(text='Export settings:', icon="EXPORT")
 
-        exportSettingsBox = MainColumn.box()
-        exportSettingsBox.label(text='Export settings:')
+        if epanel:
+            row = epanel.row()
+            row.alert = not preferences.export_path or not os.path.isdir(preferences.export_path)
+            row.prop(preferences, "export_path")
 
-        exportPath = exportSettingsBox.box()
-        exportPath.label(text='Export folder path:')
-        exportPath.prop(preferences, "export_path", text='')
+            epanel.prop(properties, 'modelname')
+            epanel.prop(properties, 'export_prefix')
+            epanel.prop(properties, 'export_mode')
 
-        exportSettingsBox.prop(properties, 'modelname')
-        exportSettingsBox.prop(properties, 'export_prefix')
-        exportSettingsBox.prop(properties, 'export_mode')
+        materialsSettingsBox, mpanel = MainColumn.box().panel("material_settings", default_closed=False)
+        materialsSettingsBox.label(text="Material settings:", icon='MATERIAL')
 
-        sizeSettingsBox = MainColumn.box()
-        sizeSettingsBox.label(text='Size settings:')
+        if mpanel:
+            if not context.selected_objects:
+                mpanel.label(text="Please select an object to see its material list", icon="INFO")
+            else:
+                materials = {}
 
-        dimensionBox = sizeSettingsBox.box()
-        dimensionBox.label(text="Object dimensions are:")
+                for obj in context.selected_objects:
+                    if obj.type != 'MESH':
+                        continue
 
-        dimensionRow = dimensionBox.row()
-        
-        if context.selected_objects:
-            bb_x, bb_y, bb_z = calculate_overall_bounding_box(context.selected_objects)
-            x_dim = round(bb_x / 2, 3)
-            y_dim = round(bb_y / 2, 3)
-            z_dim = round(bb_z / 2, 3)
-        else:
-            x_dim, y_dim, z_dim = "0", "0", "0"
-
-        dimensionRow.box().label(text=f"X={x_dim}")
-        dimensionRow.box().label(text=f"Y={y_dim}")
-        dimensionRow.box().label(text=f"Z={z_dim}")
-
-        sizeLimitBox = sizeSettingsBox.box()
-        sizeLimit = getSizeLimit(properties.sizelimit)
-
-        sizeLimitBox.prop(properties, 'sizelimit')
-
-        sizeSettingsRow = sizeLimitBox.row()
-        sizeSettingsRow.box().label(text=f"X={sizeLimit[0]}")
-        sizeSettingsRow.box().label(text=f"Y={sizeLimit[1]}")
-        sizeSettingsRow.box().label(text=f"Z={sizeLimit[2]}")
-        sizeSettingsBox.prop(properties, 'limitbypass')
-
-        materialsSettingsBox = MainColumn.box()
-        materialsSettingsBox.label(text="Material settings:")
-        materialsSettingsBox.prop(properties, "emissive_strength")
-        # materialsSettingsBox.prop(properties, "normal_invert_green")
-        # Will be properly added later
-        
-        selected_objects = context.selected_objects
-        curMats = set()
-        
-        materialsBox = materialsSettingsBox.box()
-
-        if selected_objects:
-            materialsBox.label(text="Materials:")
-            for obj in selected_objects:
-                if obj.type == 'MESH' and len(obj.material_slots) > 0:
                     for mat_slot in obj.material_slots:
-                        if mat_slot.material:
-                            material_settings = mat_slot.material.material_settings
-                            if not material_settings:
-                                continue
-                            
-                            if mat_slot.material.name not in curMats:
-                                curMats.add(mat_slot.material.name)
-                                box = materialsBox.box()
-                                box.label(text=f"{mat_slot.material.name}:")
-                                for setting in material_settings:
-                                    materialRow = box.row()
-                                    
-                                    materialRow.label(text=setting.imageName)
-                                    materialRow.prop(setting, "materialType", text="Type")
-                                    materialRow.prop(setting, "materialFilter", text="Filter")
-            
-        else:
-            materialsBox.label(text="Please select an object to see its material list")
+                        material = mat_slot.material
 
-        matButtonRow = materialsSettingsBox.box().row()
-        matButtonRow.operator("material.update_settings", text="Update materials")
-        matButtonRow.operator("material.clear_settings", text="Clear materials")
+                        if not material or material.name in materials:
+                            continue
+
+                        if not material.material_settings:
+                            continue
+
+                        materials[material.name] = material
+
+                if not materials:
+                    mpanel.label(text="No materials with settings found.",icon='INFO')
+                else:
+                    for material_name, material in sorted(materials.items()):
+                        materialBox = mpanel.box()
+                        material_header = materialBox.row()
+                        material_header.label(text=material_name)
+
+                        for setting in material.material_settings:
+                            settingRow = materialBox.box().row(align=True)
+
+                            settingRow.label(text=setting.imageName, icon='IMAGE_DATA')
+                            settingRow.prop(setting, "materialType", text="")
+                            settingRow.prop(setting, "materialFilter", text="")
+
+            matButtonRow = mpanel.row(align=True)
+            matButtonRow.operator("material.update_settings",text="Update Materials",icon='FILE_REFRESH')
+            matButtonRow.operator("material.clear_settings",text="Clear Materials",icon='TRASH')
         
+        sizeSettingsBox, spanel = MainColumn.box().panel("size_settings", default_closed=False)
+        sizeSettingsBox.label(text='Size settings:', icon="FIXED_SIZE")
+
+        if spanel:
+            sizeLimitBox = spanel.box()
+            curSizeLimit = sizeLimits[properties.sizelimit]
+
+            sizeLimitBox.prop(properties, 'sizelimit')
+
+            sizeSettingsRow = sizeLimitBox.row()
+            sizeSettingsRow.box().label(text=f"X={curSizeLimit[0]}")
+            sizeSettingsRow.box().label(text=f"Y={curSizeLimit[1]}")
+            sizeSettingsRow.box().label(text=f"Z={curSizeLimit[2]}")
+            
+            dimensionBox = spanel.box()
+            dimensionBox.label(text="Object dimensions are:")
+
+            dimensionRow = dimensionBox.row()
+            
+            if context.selected_objects:
+                bb_x, bb_y, bb_z = calculate_overall_bounding_box(context.selected_objects)
+                x_dim = round(bb_x / 2, 3)
+                y_dim = round(bb_y / 2, 3)
+                z_dim = round(bb_z / 2, 3)
+            else:
+                x_dim, y_dim, z_dim = "0", "0", "0"
+
+            dimensionRow.box().label(text=f"X={x_dim}")
+            dimensionRow.box().label(text=f"Y={y_dim}")
+            dimensionRow.box().label(text=f"Z={z_dim}")
+
+            spanel.prop(properties, 'limitbypass')
+
+        lightSettings, lpanel = MainColumn.box().panel("light_settings", default_closed=True)
+        lightSettings.label(text="Light settings:", icon='LIGHT')
+
+        if lpanel:
+            properties = context.scene.votv_properties
+            lpanel.prop(properties, 'lamp', text="Enable Light")
+
+            lampBox = lpanel.box()   
+            lampBox.enabled = properties.lamp
+
+            lampBox.prop(properties, 'lamp_toggle', text="Light toggle")
+            lampBox.row().prop(properties, 'lamp_color', text="Light Color:")
+
+            dimensionRow = lampBox.row()
+            dimensionRow.label(text="Light Offset:")
+
+            dimensionRow.operator(CopyPosButton.bl_idname, text="Copy Position to:")
+            dimensionRow.enabled = bool(context.selected_objects)
+
+            dimensionRow.prop(properties, 'lamp_offset', text="")
+
+            lampBox.prop(properties, 'lamp_intensity', text="Light Intensity:")
+            lampBox.prop(properties, 'lamp_attenuation', text="Light Attenuation:")
+            lampBox.prop(properties, 'lamp_shadows', text="Light Shadows")
+        
+        printProperties, ppanel = MainColumn.box().panel("print_settings", default_closed=True)
+        printProperties.label(text="Print properties:", icon='TOOL_SETTINGS')
+
+        if ppanel:
+            ppanel.prop(properties, "emissive_strength")
+            ppanel.prop(properties, "health")
+            ppanel.prop(properties, "damage_resistance")
+            ppanel.prop(properties, "impact_resistance")
+            ppanel.prop(properties, "physical_material")
+
         rowExport = MainColumn.row()
         rowExport.scale_y = 2
-        rowExport.operator(ExportButton.bl_idname, text="Export Objects")
+        rowExport.operator(ExportButton.bl_idname, text="Export Objects", icon="EXPORT")
 
-class VOTVE_PT_properties(bpy.types.Panel):
-    bl_label = "Properties:"
-    bl_parent_id = "VOTVE_PT_mainGUI"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "VOTV Print Exporter"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw (self, context):
-        properties = context.scene.votv_properties
-
-        layout = self.layout.box()
-        
-        layout.prop(properties, "health")
-        layout.prop(properties, "damage_resistance")
-        layout.prop(properties, "impact_resistance")
-        layout.prop(properties, "physical_material")
-
-class VOTVE_PT_lightProperties(bpy.types.Panel):
-    bl_label = "Light settings:"
-    bl_parent_id = "VOTVE_PT_mainGUI"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "VOTV Print Exporter"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        properties = context.scene.votv_properties
-        layout = self.layout.box()
-        layout.prop(properties, 'lamp', text="Enable Light")
-
-        lampBox = layout.box()   
-        lampBox.enabled = properties.lamp
-
-        lampBox.prop(properties, 'lamp_toggle', text="Light toggle")
-        lampBox.row().prop(properties, 'lamp_color', text="Light Color:")
-
-        dimensionRow = lampBox.row()
-        dimensionRow.label(text="Light Offset:")
-
-        dimensionRow.operator(CopyPosButton.bl_idname, text="Copy Position to:")
-        dimensionRow.enabled = bool(context.selected_objects)
-
-        dimensionRow.prop(properties, 'lamp_offset', text="")
-
-        lampBox.prop(properties, 'lamp_intensity', text="Light Intensity:")
-        lampBox.prop(properties, 'lamp_attenuation', text="Light Attenuation:")
-        lampBox.prop(properties, 'lamp_shadows', text="Light Shadows")
-
-classes = (VOTVExporterPreferences, VOTVProperties, MaterialSettings, ExportButton, VOTVE_PT_mainGUI, VOTVE_PT_properties, VOTVE_PT_lightProperties, CopyPosButton, UpdateMaterialSettingsOperator, ClearMaterialSettingsOperator)
+classes = (VOTVExporterPreferences, VOTVProperties, MaterialSettings, ExportButton, VOTVE_PT_mainGUI, CopyPosButton, UpdateMaterialSettingsOperator, ClearMaterialSettingsOperator)
 
 def register():
     for cls in classes:
