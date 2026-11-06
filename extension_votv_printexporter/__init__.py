@@ -224,6 +224,7 @@ class VOTVProperties(bpy.types.PropertyGroup):
         ],
         default='FULLSIZE'
     )
+    useAllUCX: bpy.props.BoolProperty(name="Use all collision meshes", default=False)
     limitbypass : bpy.props.BoolProperty(
         name="Bypass Size Limit",
         default=False
@@ -401,11 +402,13 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 #
 
 # Set Name to None to select em all
-def getUCX(view_layer, name=None):
+def getUCX(view_layer, useAllUCX=False, name=None):
     collisions = []
     for o in view_layer.objects:
-        if o.type == 'MESH' and o.name.startswith("UCX_") and (name is None or o.name[4:] in name):
-            collisions.append(o)
+        if o.type != 'MESH' or not o.name.startswith("UCX_") or (name is not None and o.name[4:] not in name) or (o.hide_render and or useAllUCX):
+            continue
+
+        collisions.append(o)
     return collisions
 
 def getExportObject(context, objects):
@@ -508,7 +511,7 @@ class ExportButton(bpy.types.Operator):
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
             name = properties.modelname or bpy.context.active_object.name
-            if not exportPrint(self, bpy.context, export_path, name, context.selected_objects, getUCX(bpy.context.view_layer, name), properties, properties_file):
+            if not exportPrint(self, bpy.context, export_path, name, context.selected_objects, getUCX(bpy.data, properties.useAllUCX, name), properties, properties_file):
                 return {"CANCELLED"}
 
             bpy.ops.object.select_all(action='DESELECT')
@@ -519,7 +522,7 @@ class ExportButton(bpy.types.Operator):
             for object in context.selected_objects:
                 bpy.ops.object.select_all(action='DESELECT')
 
-                if not exportPrint(self, bpy.context, export_path, object.name, [object], getUCX(bpy.context.view_layer, object.name), properties, properties_file):
+                if not exportPrint(self, bpy.context, export_path, object.name, [object], getUCX(bpy.data, properties.useAllUCX, object.name), properties, properties_file):
                     return {"CANCELLED"}
                     
                 bpy.ops.object.select_all(action='DESELECT')
@@ -529,7 +532,7 @@ class ExportButton(bpy.types.Operator):
         elif mode == "SCENE":
             name = properties.modelname or bpy.context.active_object.name
 
-            if not exportPrint(self, bpy.context, export_path, name, bpy.context.view_layer.objects, getUCX(bpy.context.view_layer), properties, properties_file):
+            if not exportPrint(self, bpy.context, export_path, name, bpy.context.view_layer.objects, getUCX(bpy.data, properties.useAllUCX), properties, properties_file):
                 return {"CANCELLED"}
 
             bpy.ops.object.select_all(action='DESELECT')
@@ -575,6 +578,7 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
             exportSettingsBox.prop(properties, "modelname")
             exportSettingsBox.prop(properties, "export_prefix")
             exportSettingsBox.prop(properties, "export_mode")
+            exportSettingsBox.prop(properties, "useAllUCX")
 
         # Material Settings
         materialsSettingsBox = MainColumn.box()
