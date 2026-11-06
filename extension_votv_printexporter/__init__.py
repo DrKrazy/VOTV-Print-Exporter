@@ -504,7 +504,7 @@ class ExportButton(bpy.types.Operator):
         if mode == "INDIVIDUAL" and len(context.selected_objects) == 1:
             mode = "SELECTED"
 
-        if mode == "SELECTED"
+        if mode == "SELECTED":
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
             name = properties.modelname or bpy.context.active_object.name
