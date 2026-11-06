@@ -194,6 +194,12 @@ class VOTVExporterPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "export_path")
 
 class VOTVProperties(bpy.types.PropertyGroup):
+    show_export:        bpy.props.BoolProperty(name="Export Settings", default=True)
+    show_material:      bpy.props.BoolProperty(name="Materials", default=False)
+    show_size:          bpy.props.BoolProperty(name="Size Settings", default=False)
+    show_light:         bpy.props.BoolProperty(name="Light Settings", default=False)
+    show_properties:    bpy.props.BoolProperty(name="Print Properties", default=False)
+
     modelname : bpy.props.StringProperty(
         name="Model name",
         default="",
@@ -633,24 +639,36 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
 
         MainColumn = layout.box()
 
-        exportSettingsBox, epanel = MainColumn.box().panel("export_settings", default_closed=False)
-        exportSettingsBox.label(text='Export settings:', icon="EXPORT")
+        # Export Settings
+        # The fact I need to make my own panel logic for this to look good is fucking insane
+        # Fuck you
+        # Code heavily inspired by Falkener's from the "Ariral Maker v2" addon: https://jinxxy.com/Gigaroni/6uAoz
 
-        if epanel:
-            row = epanel.row()
-            row.alert = not preferences.export_path or not os.path.isdir(preferences.export_path)
-            row.prop(preferences, "export_path")
+        exportSettingsBox = MainColumn.box()
 
-            epanel.prop(properties, 'modelname')
-            epanel.prop(properties, 'export_prefix')
-            epanel.prop(properties, 'export_mode')
+        eSettingsRow = exportSettingsBox.row()
+        eSettingsRow.prop(properties, "show_export", icon="TRIA_DOWN" if properties.show_export else "TRIA_RIGHT", icon_only=True, emboss=False)
+        eSettingsRow.label(text="Export Settings", icon="EXPORT")
 
-        materialsSettingsBox, mpanel = MainColumn.box().panel("material_settings", default_closed=False)
-        materialsSettingsBox.label(text="Material settings:", icon='MATERIAL')
+        if properties.show_export:
+            exportSettingsRow = exportSettingsBox.row()
+            exportSettingsRow.alert = not preferences.export_path or not os.path.isdir(preferences.export_path)
+            exportSettingsRow.prop(preferences, "export_path")
 
-        if mpanel:
+            exportSettingsBox.prop(properties, "modelname")
+            exportSettingsBox.prop(properties, "export_prefix")
+            exportSettingsBox.prop(properties, "export_mode")
+
+        # Material Settings
+        materialsSettingsBox = MainColumn.box()
+
+        mSettingsRow = materialsSettingsBox.row()
+        mSettingsRow.prop(properties, "show_material", icon="TRIA_DOWN" if properties.show_material else "TRIA_RIGHT", icon_only=True, emboss=False)
+        mSettingsRow.label(text="Material settings:", icon='MATERIAL')
+
+        if properties.show_material:
             if not context.selected_objects:
-                mpanel.label(text="Please select an object to see its material list", icon="INFO")
+                materialsSettingsBox.label(text="Please select an object to see its material list", icon="INFO")
             else:
                 materials = {}
 
@@ -670,10 +688,10 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
                         materials[material.name] = material
 
                 if not materials:
-                    mpanel.label(text="No materials with settings found.",icon='INFO')
+                    materialsSettingsBox.label(text="No materials with settings found.",icon='INFO')
                 else:
                     for material_name, material in sorted(materials.items()):
-                        materialBox = mpanel.box()
+                        materialBox = materialsSettingsBox.box()
                         material_header = materialBox.row()
                         material_header.label(text=material_name)
 
@@ -684,15 +702,20 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
                             settingRow.prop(setting, "materialType", text="")
                             settingRow.prop(setting, "materialFilter", text="")
 
-            matButtonRow = mpanel.row(align=True)
+            matButtonRow = materialsSettingsBox.row(align=True)
             matButtonRow.operator("material.update_settings",text="Update Materials",icon='FILE_REFRESH')
             matButtonRow.operator("material.clear_settings",text="Clear Materials",icon='TRASH')
         
-        sizeSettingsBox, spanel = MainColumn.box().panel("size_settings", default_closed=False)
-        sizeSettingsBox.label(text='Size settings:', icon="FIXED_SIZE")
+        # Size Settings
 
-        if spanel:
-            sizeLimitBox = spanel.box()
+        sizeSettingsBox = MainColumn.box()
+
+        sSettingsRow = sizeSettingsBox.row()
+        sSettingsRow.prop(properties, "show_size", icon="TRIA_DOWN" if properties.show_size else "TRIA_RIGHT", icon_only=True, emboss=False)
+        sSettingsRow.label(text='Size settings:', icon="FIXED_SIZE")
+
+        if properties.show_size:
+            sizeLimitBox = sizeSettingsBox.box()
             curSizeLimit = sizeLimits[properties.sizelimit]
 
             sizeLimitBox.prop(properties, 'sizelimit')
@@ -702,7 +725,7 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
             sizeSettingsRow.box().label(text=f"Y={curSizeLimit[1]}")
             sizeSettingsRow.box().label(text=f"Z={curSizeLimit[2]}")
             
-            dimensionBox = spanel.box()
+            dimensionBox = sizeSettingsBox.box()
             dimensionBox.label(text="Object dimensions are:")
 
             dimensionRow = dimensionBox.row()
@@ -719,19 +742,21 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
             dimensionRow.box().label(text=f"Y={y_dim}")
             dimensionRow.box().label(text=f"Z={z_dim}")
 
-            spanel.prop(properties, 'limitbypass')
+            sizeSettingsBox.prop(properties, 'limitbypass')
 
-        lightSettings, lpanel = MainColumn.box().panel("light_settings", default_closed=True)
-        lightSettings.label(text="Light settings:", icon='LIGHT')
+        # Light Settings
 
-        if lpanel:
-            properties = context.scene.votv_properties
-            lpanel.prop(properties, 'lamp', text="Enable Light")
+        lightSettings = MainColumn.box()
+        
+        lSettingsRow = lightSettings.row()
+        lSettingsRow.prop(properties, "show_light", icon="TRIA_DOWN" if properties.show_light else "TRIA_RIGHT", icon_only=True, emboss=False)
+        lSettingsRow.label(text="Light settings:", icon='LIGHT')
 
-            lampBox = lpanel.box()   
+        if properties.show_light:
+            lightSettings.prop(properties, 'lamp', text="Enable Light")
+            lampBox = lightSettings.box()   
             lampBox.enabled = properties.lamp
 
-            lampBox.prop(properties, 'lamp_toggle', text="Light toggle")
             lampBox.row().prop(properties, 'lamp_color', text="Light Color:")
 
             dimensionRow = lampBox.row()
@@ -744,17 +769,22 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
 
             lampBox.prop(properties, 'lamp_intensity', text="Light Intensity:")
             lampBox.prop(properties, 'lamp_attenuation', text="Light Attenuation:")
+            lampBox.prop(properties, 'lamp_toggle', text="Light toggle")
             lampBox.prop(properties, 'lamp_shadows', text="Light Shadows")
-        
-        printProperties, ppanel = MainColumn.box().panel("print_settings", default_closed=True)
-        printProperties.label(text="Print properties:", icon='TOOL_SETTINGS')
 
-        if ppanel:
-            ppanel.prop(properties, "emissive_strength")
-            ppanel.prop(properties, "health")
-            ppanel.prop(properties, "damage_resistance")
-            ppanel.prop(properties, "impact_resistance")
-            ppanel.prop(properties, "physical_material")
+        # Print Properties
+        
+        printProperties = MainColumn.box()
+        pRow = printProperties.row()
+        pRow.prop(properties, "show_properties", icon="TRIA_DOWN" if properties.show_properties else "TRIA_RIGHT", icon_only=True, emboss=False)
+        pRow.label(text="Print properties:", icon='TOOL_SETTINGS')
+
+        if properties.show_properties:
+            printProperties.prop(properties, "emissive_strength")
+            printProperties.prop(properties, "health")
+            printProperties.prop(properties, "damage_resistance")
+            printProperties.prop(properties, "impact_resistance")
+            printProperties.prop(properties, "physical_material")
 
         rowExport = MainColumn.row()
         rowExport.scale_y = 2
