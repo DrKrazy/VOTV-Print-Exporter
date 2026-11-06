@@ -403,7 +403,7 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 # Set Name to None to select em all
 def selectUCX(view_layer, name=None):
     collisions = []
-    for o in view_layer.objects
+    for o in view_layer.objects:
         if o.type == 'MESH' and o.name.startswith("UCX_") and (name is None or o.name[4:] in name):
             collisions.append(o)
     return collisions
