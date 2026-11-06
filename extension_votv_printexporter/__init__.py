@@ -405,7 +405,7 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 def getUCX(view_layer, useAllUCX=False, name=None):
     collisions = []
     for o in view_layer.objects:
-        if o.type != 'MESH' or not o.name.startswith("UCX_") or (name is not None and o.name[4:] not in name) or (o.hide_render and or useAllUCX):
+        if o.type != 'MESH' or not o.name.startswith("UCX_") or (name is not None and o.name[4:] not in name) or (o.hide_render and not useAllUCX):
             continue
 
         collisions.append(o)
