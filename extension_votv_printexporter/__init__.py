@@ -401,12 +401,11 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 #
 
 # Set Name to None to select em all
-def getUCX(view_layer, name=None):
-    collisions = []
+def selectUCX(view_layer, name=None):
     for o in view_layer.objects:
         if o.type == 'MESH' and o.name.startswith("UCX_") and (name is None or o.name[4:] in name):
-            collisions.append(o)
-    return collisions
+            o.select_set(True)
+    return
 
 class ExportButton(bpy.types.Operator):
     bl_idname = "object.export_print"
@@ -468,8 +467,7 @@ class ExportButton(bpy.types.Operator):
             joinedObject = bpy.context.active_object
             bpy.ops.object.select_all(action='DESELECT')
 
-            collisions = getUCX(bpy.context.view_layer, name)
-            collisions.select_set(True)
+            selectUCX(bpy.context.view_layer, name)
             
             joinedObject.select_set(True)
             bpy.context.view_layer.objects.active = joinedObject
@@ -527,8 +525,7 @@ class ExportButton(bpy.types.Operator):
 
                 bpy.ops.object.select_all(action='DESELECT')
                 
-                collisions = getUCX(bpy.context.view_layer, name)
-                collisions.select_set(True)
+                selectUCX(bpy.context.view_layer, name)
 
                 duplicatedObject.select_set(True)
                 bpy.context.view_layer.objects.active = duplicatedObject
@@ -584,8 +581,7 @@ class ExportButton(bpy.types.Operator):
             bpy.ops.object.select_all(action='DESELECT')
             joinedObject.select_set(True)
 
-            collisions = getUCX(bpy.context.view_layer, "None")
-            collisions.select_set(True)
+            selectUCX(bpy.context.view_layer, "None")
             
             bpy.context.view_layer.objects.active = joinedObject
 
