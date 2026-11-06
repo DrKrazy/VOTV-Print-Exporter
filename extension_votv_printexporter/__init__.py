@@ -401,11 +401,67 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 #
 
 # Set Name to None to select em all
-def selectUCX(view_layer, name=None):
+def getUCX(view_layer, name=None):
+    collisions = []
     for o in view_layer.objects:
         if o.type == 'MESH' and o.name.startswith("UCX_") and (name is None or o.name[4:] in name):
-            o.select_set(True)
-    return
+            collisions.append(o)
+    return collisions
+
+def getExportObject(context, objects):
+    view_layer = context.view_layer
+ 
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in objects:
+        obj.select_set(True)
+    view_layer.objects.active = objects[0]
+ 
+    bpy.ops.object.duplicate()
+    duplicates = list(context.selected_objects)
+ 
+    view_layer.objects.active = duplicates[0]
+    bpy.ops.object.convert(target='MESH')
+    if len(duplicates) > 1:
+        bpy.ops.object.join()
+ 
+    return view_layer.objects.active
+
+def removeObject(obj):
+    mesh = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if mesh is not None and mesh.users == 0:
+        bpy.data.meshes.remove(mesh)
+
+def exportPrint(self, context, export_path, name, objects, collisions, properties, properties_file):
+    prefixed_name = f"{properties.export_prefix}_{name}" if properties.export_prefix else name
+    export_folder = os.path.join(export_path, prefixed_name)
+    object_file_path = os.path.join(export_folder, f"{prefixed_name}.obj")
+ 
+    exportObject = getExportObject(context, objects)
+    try:
+        bpy.ops.object.select_all(action='DESELECT')
+        for collision in collisions:
+            collision.select_set(True)
+
+        exportObject.select_set(True)
+        context.view_layer.objects.active = exportObject
+ 
+        if not properties.limitbypass:
+            result = sizeCheck()
+            if "ERROR" in result:
+                self.report({'ERROR'}, result)
+                return False
+            if "WARNING" in result:
+                self.report({'WARNING'}, result)
+ 
+        create_folder(self, export_folder)
+        exportOBJ(self, object_file_path, True)
+        exportOBJMaterials(exportObject, export_folder)
+        save_properties_file(export_folder, properties_file)
+        return True
+    finally:
+        # Runs on success, on cancel, and if anything above raises
+        removeObject(exportObject)
 
 class ExportButton(bpy.types.Operator):
     bl_idname = "object.export_print"
@@ -448,166 +504,31 @@ class ExportButton(bpy.types.Operator):
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
             name = properties.modelname or bpy.context.active_object.name
-            prefixedName = f"{properties.export_prefix}_{name}" if properties.export_prefix else name
-            export_folder = os.path.join(export_path, prefixedName)
-            object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
-
-            selectAll(context.selected_objects, True)
-
-            bpy.ops.object.duplicate()
-            duplicatedObjects = context.selected_objects
+            if not exportPrint(self, bpy.context, export_path, name, context.selected_objects, getUCX(bpy.context.view_layer, name), properties, properties_file):
+                return {"CANCELLED"}
 
             bpy.ops.object.select_all(action='DESELECT')
-            selectAll(duplicatedObjects, True)
-            bpy.ops.object.convert(target='MESH')
-
-            bpy.context.view_layer.objects.active = duplicatedObjects[0]
-            bpy.ops.object.join()
-
-            joinedObject = bpy.context.active_object
-            bpy.ops.object.select_all(action='DESELECT')
-
-            selectUCX(bpy.context.view_layer, name)
-            
-            joinedObject.select_set(True)
-            bpy.context.view_layer.objects.active = joinedObject
-
-            if not properties.limitbypass:
-                sizeCheckReturn = sizeCheck()
-
-                if "ERROR" in sizeCheckReturn:
-                    self.report({'ERROR'}, sizeCheckReturn)
-
-                    # Clean up after error
-                    bpy.ops.object.select_all(action='DESELECT')
-                    joinedObject.select_set(True)
-                    bpy.ops.object.delete(use_global=False)
-
-                    return {"CANCELLED"}
-                elif "WARNING" in sizeCheckReturn:
-                    self.report({'WARNING'}, sizeCheckReturn)
-
-            create_folder(self, export_folder)
-            exportOBJ(self, object_file_path, True)
-            exportOBJMaterials(joinedObject, export_folder)
-            save_properties_file(export_folder, properties_file)
-
-            bpy.ops.object.select_all(action='DESELECT')
-            joinedObject.select_set(True)
-            bpy.ops.object.delete(use_global=False)
 
             self.report({'INFO'}, f"Exported Selected")
                 
-        elif properties.export_mode == 'INDIVIDUAL':
-
-            if not context.selected_objects:
-                self.report({'ERROR'}, "No objects selected for export")
-                return {"CANCELLED"}
-            
+        elif properties.export_mode == 'INDIVIDUAL':           
             for object in context.selected_objects:
                 bpy.ops.object.select_all(action='DESELECT')
-                bpy.context.view_layer.objects.active = object
-                object.select_set(True)
 
-                name = properties.modelname or bpy.context.active_object.name
-                prefixedName = f"{properties.export_prefix}_{name}" if properties.export_prefix else name
-                export_folder = os.path.join(export_path, prefixedName)
-                object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
-
-                selectAll(context.selected_objects, True)
-
-                bpy.ops.object.duplicate()
-                duplicatedObject = context.selected_objects
-
-                selectAll(duplicatedObject, True)
-                bpy.ops.object.convert(target='MESH')
-                duplicatedObject = bpy.context.view_layer.objects.active
-
+                if not exportPrint(self, bpy.context, export_path, object.name, [object], getUCX(bpy.context.view_layer, object.name), properties, properties_file):
+                    return {"CANCELLED"}
+                    
                 bpy.ops.object.select_all(action='DESELECT')
-                
-                selectUCX(bpy.context.view_layer, name)
-
-                duplicatedObject.select_set(True)
-                bpy.context.view_layer.objects.active = duplicatedObject
-
-                if not properties.limitbypass:
-                    sizeCheckReturn = sizeCheck()
-
-                    if "ERROR" in sizeCheckReturn:
-                        self.report({'ERROR'}, sizeCheckReturn)
-
-                        bpy.ops.object.select_all(action='DESELECT')
-                        duplicatedObject.select_set(True)
-                        bpy.ops.object.delete(use_global=False)
-
-                        return {"CANCELLED"}
-                    elif "WARNING" in sizeCheckReturn:
-                        self.report({'WARNING'}, sizeCheckReturn)
-
-                create_folder(self, export_folder)
-                exportOBJ(self, object_file_path, True)
-                exportOBJMaterials(duplicatedObject, export_folder)
-                save_properties_file(export_folder, properties_file)
-
-                bpy.ops.object.select_all(action='DESELECT')
-                duplicatedObject.select_set(True)
-                bpy.ops.object.delete(use_global=False)
-
-                exported_count+=        1
 
             self.report({'INFO'}, f"Exported Individual")
 
         elif properties.export_mode == 'SCENE':
             name = properties.modelname or bpy.context.active_object.name
-            
-            prefixedName = f"{properties.export_prefix}_{name}" if properties.export_prefix else name
-            export_folder = os.path.join(export_path, prefixedName)
-            object_file_path = os.path.join(export_folder, f"{prefixedName}.obj")
 
-            bpy.ops.object.select_all(action='SELECT')
-            selectAll(context.selected_objects, True)
-
-            bpy.context.view_layer.objects.active = context.selected_objects[0]
-
-            bpy.ops.object.duplicate()
-            duplicatedObjects = context.selected_objects
-
-            selectAll(duplicatedObjects, True)
-            bpy.ops.object.convert(target='MESH')
-            bpy.context.view_layer.objects.active = duplicatedObjects[0]
-            bpy.ops.object.join()
-
-            joinedObject = bpy.context.active_object
-            bpy.ops.object.select_all(action='DESELECT')
-            joinedObject.select_set(True)
-
-            selectUCX(bpy.context.view_layer, "None")
-            
-            bpy.context.view_layer.objects.active = joinedObject
-
-            if not properties.limitbypass:
-                sizeCheckReturn = sizeCheck()
-
-                if "ERROR" in sizeCheckReturn:
-                    self.report({'ERROR'}, sizeCheckReturn)
-
-                    # Clean up after error
-                    bpy.ops.object.select_all(action='DESELECT')
-                    joinedObject.select_set(True)
-                    bpy.ops.object.delete(use_global=False)
-
-                    return {"CANCELLED"}
-                elif "WARNING" in sizeCheckReturn:
-                    self.report({'WARNING'}, sizeCheckReturn)
-
-            create_folder(self, export_folder)
-            exportOBJ(self, object_file_path, True)
-            exportOBJMaterials(joinedObject, export_folder)
-            save_properties_file(export_folder, properties_file)
+            if not exportPrint(self, bpy.context, export_path, name, bpy.context.view_layer.objects, getUCX(bpy.context.view_layer), properties, properties_file):
+                return {"CANCELLED"}
 
             bpy.ops.object.select_all(action='DESELECT')
-            joinedObject.select_set(True)
-            bpy.ops.object.delete(use_global=False)
 
             self.report({'INFO'}, f"Exported Scene")
             
