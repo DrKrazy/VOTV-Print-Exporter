@@ -400,6 +400,14 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 # Main Export Function
 #
 
+# Set Name to None to select em all
+def selectUCX(view_layer, name=None):
+    collisions = []
+    for o in view_layer.objects
+        if o.type == 'MESH' and o.name.startswith("UCX_") and (name is None or o.name[4:] in name):
+            collisions.append(o)
+    return collisions
+
 class ExportButton(bpy.types.Operator):
     bl_idname = "object.export_print"
     bl_label = "Export OBJ"
@@ -407,7 +415,7 @@ class ExportButton(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return (context.selected_objects and context.mode == 'OBJECT') or len(context.scene.votv_properties.modelname) > 0
+        return (context.selected_objects and context.mode == 'OBJECT') or (len(context.scene.votv_properties.modelname) > 0 and context.scene.votv_properties.export_mode != "INDIVIDUAL")
 
     def execute(self, context):
         properties = context.scene.votv_properties
@@ -421,10 +429,6 @@ class ExportButton(bpy.types.Operator):
         if not os.path.exists(export_path):
             self.report({'ERROR'}, "Export path does not exist.")
             return {"CANCELLED"}
-
-        exported_count = 0
-        collision_count = 0
-        skipped_count = 0
         
         properties_file = {
             "physical_material": properties.physical_material,
@@ -442,7 +446,6 @@ class ExportButton(bpy.types.Operator):
         }
 
         if properties.export_mode == 'SELECTED' or (properties.export_mode == 'INDIVIDUAL' and len(context.selected_objects) == 1):
-
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
             name = properties.modelname or bpy.context.active_object.name
@@ -465,10 +468,7 @@ class ExportButton(bpy.types.Operator):
             joinedObject = bpy.context.active_object
             bpy.ops.object.select_all(action='DESELECT')
 
-            for collision in bpy.context.scene.objects:
-                if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name[4:] in name and collision.name in bpy.context.view_layer.objects:
-                    collision.select_set(True)
-                    collision_count += 1
+            selectUCX(bpy.context.view_layer, name)
             
             joinedObject.select_set(True)
             bpy.context.view_layer.objects.active = joinedObject
@@ -497,7 +497,7 @@ class ExportButton(bpy.types.Operator):
             joinedObject.select_set(True)
             bpy.ops.object.delete(use_global=False)
 
-            self.report({'INFO'}, f"Exported selected object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
+            self.report({'INFO'}, f"Exported Selected")
                 
         elif properties.export_mode == 'INDIVIDUAL':
 
@@ -526,10 +526,9 @@ class ExportButton(bpy.types.Operator):
 
 
                 bpy.ops.object.select_all(action='DESELECT')
-                for collision in bpy.context.scene.objects:
-                    if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name[4:] in name and collision.name in bpy.context.view_layer.objects:
-                        collision.select_set(True)
-                        collision_count += 1
+                
+                selectUCX(bpy.context.view_layer, name)
+
                 duplicatedObject.select_set(True)
                 bpy.context.view_layer.objects.active = duplicatedObject
 
@@ -558,16 +557,10 @@ class ExportButton(bpy.types.Operator):
 
                 exported_count+=        1
 
-            self.report({'INFO'}, f"Exported {exported_count} individual object(s) with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
-
+            self.report({'INFO'}, f"Exported Individual")
 
         elif properties.export_mode == 'SCENE':
-
             name = properties.modelname or bpy.context.active_object.name
-
-            if not name:
-                self.report({'ERROR'}, "A model name or at least an object must be selected to use scene export.")
-                return {"CANCELLED"}
             
             prefixedName = f"{properties.export_prefix}_{name}" if properties.export_prefix else name
             export_folder = os.path.join(export_path, prefixedName)
@@ -590,10 +583,7 @@ class ExportButton(bpy.types.Operator):
             bpy.ops.object.select_all(action='DESELECT')
             joinedObject.select_set(True)
 
-            for collision in bpy.context.scene.objects:
-                if collision.type == 'MESH' and collision.name.startswith("UCX_") and collision.name in bpy.context.view_layer.objects:
-                    collision.select_set(True)
-                    collision_count += 1
+            selectUCX(bpy.context.view_layer, "None")
             
             bpy.context.view_layer.objects.active = joinedObject
 
@@ -621,10 +611,9 @@ class ExportButton(bpy.types.Operator):
             joinedObject.select_set(True)
             bpy.ops.object.delete(use_global=False)
 
-            self.report({'INFO'}, f"Exported Scene with {collision_count} collision object(s) and skipped {skipped_count} non-mesh object(s).")
+            self.report({'INFO'}, f"Exported Scene")
             
         return {"FINISHED"}
-
 #
 # Main GUI
 #
