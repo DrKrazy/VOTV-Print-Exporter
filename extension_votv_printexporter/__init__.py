@@ -233,9 +233,9 @@ class VOTVProperties(bpy.types.PropertyGroup):
         name="Export Mode",
         description="Choose how to export the objects",
         items=[
-            ('SELECTED', "Selected Objects", "Export all selected objects into one object"),
-            ('INDIVIDUAL', "Individual Objects", "Export all selected objects individually"),
-            ('SCENE', "Whole Scene", "Exports the entire scene as a printable object")
+            ('SELECTED', "Combined selected Objects", "Export all selected objects into one object"),
+            ('INDIVIDUAL', "Individual selected Objects", "Export all selected objects individually"),
+            ('SCENE', "Scene", "Exports the entire scene as a printable object")
         ],
         default='SELECTED'
     )
@@ -266,12 +266,6 @@ class VOTVProperties(bpy.types.PropertyGroup):
         description="Strength of the emissive texture",
         default=0.0,
         min=0.0
-    )
-    # Will be added later on
-    normal_invert_green : bpy.props.BoolProperty(
-        name="Normal: Invert green channel",
-        description="Use if your normals look weird, inverts the green channel of the exported normals",
-        default=False
     )
     lamp : bpy.props.BoolProperty(
         name="Lamp",
@@ -405,6 +399,7 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 def getUCX(view_layer, useAllUCX=False, name=None):
     collisions = []
     for o in view_layer.objects:
+        print(o.name)
         if o.type != 'MESH' or not o.name.startswith("UCX_") or (name is not None and o.name[4:] not in name) or (o.hide_render and not useAllUCX):
             continue
 
