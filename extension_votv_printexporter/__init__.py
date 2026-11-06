@@ -69,6 +69,7 @@ def selectAll(objects, select, type = {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META
     for obj in objects:
         if obj.type not in type:
             continue
+
         if not selectUCX and obj.name.startswith("UCX_"):
             continue
         obj.select_set(select)
@@ -77,22 +78,22 @@ def calculate_overall_bounding_box(selected_objects):
     if not selected_objects:
         return None
 
-    min_bound = mathutils.Vector((float('inf'), float('inf'), float('inf')))
-    max_bound = mathutils.Vector((float('-inf'), float('-inf'), float('-inf')))
+    all_corners = []
 
     for obj in selected_objects:
-        if obj.type in {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}:
-            bbox_corners = [obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box]
-            for corner in bbox_corners:
-                min_bound.x = min(min_bound.x, corner.x)
-                min_bound.y = min(min_bound.y, corner.y)
-                min_bound.z = min(min_bound.z, corner.z)
-                max_bound.x = max(max_bound.x, corner.x)
-                max_bound.y = max(max_bound.y, corner.y)
-                max_bound.z = max(max_bound.z, corner.z)
+        if obj.type not in {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}:
+            continue
 
-    overall_dimensions = (max_bound.x - min_bound.x, max_bound.y - min_bound.y, max_bound.z - min_bound.z)
-    return overall_dimensions
+        local = np.array(obj.bound_box)                    # (8, 3)
+        mw = np.array(obj.matrix_world)                    # (4, 4)
+        world = local @ mw[:3, :3].T + mw[:3, 3]           # apply transform
+        all_corners.append(world)
+
+    if not all_corners:
+        return None
+
+    pts = np.concatenate(all_corners)
+    return tuple(pts.max(axis=0) - pts.min(axis=0))
 
 def exportOBJ(self, file_path, exportSelected):
     try:
@@ -110,8 +111,8 @@ def create_folder(self, folder_path):
 
 def save_properties_file(export_path, properties):
     properties_file_path = os.path.join(export_path, "properties.cfg")
-    with open(properties_file_path, 'w') as f:
 
+    with open(properties_file_path, 'w') as f:
         # Texture properties
         for obj in bpy.context.selected_objects:
             if obj.type != 'MESH':
@@ -130,23 +131,27 @@ def save_properties_file(export_path, properties):
                 f.write(f"{key}={value}\n")
 
 def sizeCheck():
+    TINY_THRESHOLDS = (10, 10, 15)
     properties = bpy.context.scene.votv_properties
-    returnMsg = "Success: Completed"
-    maxX, maxY, maxZ = sizeLimits[properties.sizelimit]
+    dims = calculate_overall_bounding_box(bpy.context.selected_objects)
 
-    bb_x, bb_y, bb_z = calculate_overall_bounding_box(bpy.context.selected_objects)
-    
-    x_dim = round(bb_x / 2, 3)
-    y_dim = round(bb_y / 2, 3)
-    z_dim = round(bb_z / 2, 3)
+    if dims is None:
+        return "ERROR: No valid objects selected"
 
-    if any(dim > limit for dim, limit in zip([x_dim, y_dim, z_dim], [maxX, maxY, maxZ])):
-        returnMsg = f"ERROR: Model is too big for printing\n X = {x_dim}, Max is {maxX}\nY = {y_dim}, Max is {maxY}\nZ = {z_dim}, Max is {maxZ}"
+    limits = sizeLimits[bpy.context.scene.votv_properties.sizelimit]
+    x, y, z = (round(d / 2, 3) for d in dims)
+    maxX, maxY, maxZ = limits
 
-    if all(dim < threshold for dim, threshold in zip([x_dim, y_dim, z_dim], [10, 10, 15])):
-        returnMsg = "WARNING: Model is very tiny, it probably won't be able to be seen in-game due to its size\nYour model has still been exported to Voices of the Void"
+    if x > maxX or y > maxY or z > maxZ:
+        return (f"ERROR: Model is too big for printing\n"
+                f"X = {x}, Max is {maxX}\n"
+                f"Y = {y}, Max is {maxY}\n"
+                f"Z = {z}, Max is {maxZ}")
 
-    return returnMsg   
+    if x < TINY_THRESHOLDS[0] and y < TINY_THRESHOLDS[1] and z < TINY_THRESHOLDS[2]:
+        return ("WARNING: Model is very tiny, it probably won't be able to be seen in-game due to its size\n"
+                "Your model has still been exported to Voices of the Void")
+    return "Success: Completed"
 
 #
 # Classes
@@ -398,7 +403,7 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 class ExportButton(bpy.types.Operator):
     bl_idname = "object.export_print"
     bl_label = "Export OBJ"
-    bl_description = "Export selected objects or the entire scene to OBJ format. Use the properties panel to configure export settings."
+    bl_description = "Export selected objects or the entire scene to OBJ format."
 
     @classmethod
     def poll(cls, context):
@@ -790,7 +795,16 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
         rowExport.scale_y = 2
         rowExport.operator(ExportButton.bl_idname, text="Export Objects", icon="EXPORT")
 
-classes = (VOTVExporterPreferences, VOTVProperties, MaterialSettings, ExportButton, VOTVE_PT_mainGUI, CopyPosButton, UpdateMaterialSettingsOperator, ClearMaterialSettingsOperator)
+classes = (
+    VOTVExporterPreferences, 
+    VOTVProperties, 
+    MaterialSettings, 
+    ExportButton, 
+    CopyPosButton, 
+    UpdateMaterialSettingsOperator, 
+    VOTVE_PT_mainGUI, 
+    ClearMaterialSettingsOperator
+)
 
 def register():
     for cls in classes:
