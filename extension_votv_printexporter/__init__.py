@@ -11,6 +11,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+"""
+TODO:
+
+- Finish optimizing the export functions
+- Fix scene export fucking up UV maps
+- Rewrite Light Settings to be per object based
+- Make light offset based ona spawned in empty instead of just a copy pose
+- Add potential preview of light offset
+- Add PBR "baking" back (not guaranteed, I will most likely rely on a node setup instead and make the pbr maps myself)
+- Add a way to invert green for normal maps (normal maps are not normally used for print but they can)
+- Add a "size to maximum" button so you can maximise a print
+"""
+
 import bpy
 import os
 import mathutils
@@ -19,6 +32,7 @@ import numpy as np
 #
 # Function Used
 #
+objectTypeFilter = {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}
 
 sizeLimits = {
     "FULLSIZE": [100.00, 100.00, 150.00],
@@ -64,7 +78,7 @@ def exportOBJMaterials(obj, exportpath):
                         if not os.path.exists(diffuse_texture_path):
                             saveImage(diffuse_texture_path, image)
 
-def selectAll(objects, select, type = {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}, selectUCX = False):
+def selectAll(objects, select, type = objectTypeFilter, selectUCX = False):
     bpy.ops.object.select_all(action='DESELECT')
     for obj in objects:
         if obj.type not in type:
@@ -81,7 +95,7 @@ def calculate_overall_bounding_box(selected_objects):
     all_corners = []
 
     for obj in selected_objects:
-        if obj.type not in {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}:
+        if obj.type not in objectTypeFilter:
             continue
 
         local = np.array(obj.bound_box)                    # (8, 3)
@@ -224,7 +238,6 @@ class VOTVProperties(bpy.types.PropertyGroup):
         ],
         default='FULLSIZE'
     )
-    useAllUCX: bpy.props.BoolProperty(name="Use all collision meshes", default=False)
     limitbypass : bpy.props.BoolProperty(
         name="Bypass Size Limit",
         default=False
@@ -345,35 +358,36 @@ class CopyPosButton(bpy.types.Operator):
 class UpdateMaterialSettingsOperator(bpy.types.Operator):
     bl_idname = "material.update_settings"
     bl_label = "Update Material Settings"
+    bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return context.selected_objects and context.mode == 'OBJECT'
+        return bool(context.selected_objects) and context.mode == 'OBJECT'
 
     def execute(self, context):
+        materials = set()
         for obj in context.selected_objects:
-            if obj.type != 'MESH':
-                continue
-               
-            for mat_slot in obj.material_slots:
-                if not mat_slot.material:
+            if obj.type == 'MESH':
+                for slot in obj.material_slots:
+                    if slot.material and slot.material.node_tree:
+                        materials.add(slot.material)
+
+        for material in materials:
+            settings = material.material_settings
+
+            for node in material.node_tree.nodes:
+                if node.type != 'TEX_IMAGE':
                     continue
 
-                material = mat_slot.material
-                if "material_settings" not in material:
-                    material["material_settings"] = bpy.props.CollectionProperty(type=MaterialSettings)()
+                image = node.image
+                if not image or any(setting.image == node.image for setting in material.material_settings):
+                    continue
 
-                for node in material.node_tree.nodes:
-                    if node.type == 'TEX_IMAGE' and node.image:
-                        imagename = node.label or node.image.name
-                        exists = any(setting.image == node.image for setting in material.material_settings)
+                new_setting = settings.add()
+                new_setting.image = image
+                new_setting.imageName = node.label or image.name
 
-                        if not exists:
-                            new_setting = material.material_settings.add()
-                            new_setting.image = node.image
-                            new_setting.imageName = imagename
-
-        return {"FINISHED"}
+        return {'FINISHED'}
 
 class ClearMaterialSettingsOperator(bpy.types.Operator):
     bl_idname = "material.clear_settings"
@@ -384,11 +398,16 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
         return context.selected_objects and context.mode == 'OBJECT'
 
     def execute(self, context):
+        materials = set()
         for obj in context.selected_objects:
             if obj.type == 'MESH':
-                for mat_slot in obj.material_slots:
-                    if mat_slot.material:
-                        mat_slot.material.material_settings.clear()
+                for slot in obj.material_slots:
+                    if slot.material and slot.material.node_tree:
+                        materials.add(slot.material)
+
+        for material in materials:
+            material.material_settings.clear()
+                        
         return {"FINISHED"}
     
 #
@@ -396,11 +415,11 @@ class ClearMaterialSettingsOperator(bpy.types.Operator):
 #
 
 # Set Name to None to select em all
-def getUCX(view_layer, useAllUCX=False, name=None):
+def getUCX(view_layer, name=None):
     collisions = []
     for o in view_layer.objects:
         print(o.name)
-        if o.type != 'MESH' or not o.name.startswith("UCX_") or (name is not None and o.name[4:] not in name) or (o.hide_render and not useAllUCX):
+        if o.type != 'MESH' or not o.name.startswith("UCX_") or (name is not None and o.name[4:] not in name):
             continue
 
         collisions.append(o)
@@ -506,7 +525,7 @@ class ExportButton(bpy.types.Operator):
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
             name = properties.modelname or bpy.context.active_object.name
-            if not exportPrint(self, bpy.context, export_path, name, context.selected_objects, getUCX(bpy.data, properties.useAllUCX, name), properties, properties_file):
+            if not exportPrint(self, bpy.context, export_path, name, context.selected_objects, getUCX(bpy.data, name), properties, properties_file):
                 return {"CANCELLED"}
 
             bpy.ops.object.select_all(action='DESELECT')
@@ -517,7 +536,7 @@ class ExportButton(bpy.types.Operator):
             for object in context.selected_objects:
                 bpy.ops.object.select_all(action='DESELECT')
 
-                if not exportPrint(self, bpy.context, export_path, object.name, [object], getUCX(bpy.data, properties.useAllUCX, object.name), properties, properties_file):
+                if not exportPrint(self, bpy.context, export_path, object.name, [object], getUCX(bpy.data, object.name), properties, properties_file):
                     return {"CANCELLED"}
                     
                 bpy.ops.object.select_all(action='DESELECT')
@@ -527,7 +546,7 @@ class ExportButton(bpy.types.Operator):
         elif mode == "SCENE":
             name = properties.modelname or bpy.context.active_object.name
 
-            if not exportPrint(self, bpy.context, export_path, name, bpy.context.view_layer.objects, getUCX(bpy.data, properties.useAllUCX), properties, properties_file):
+            if not exportPrint(self, bpy.context, export_path, name, bpy.context.view_layer.objects, getUCX(bpy.data), properties, properties_file):
                 return {"CANCELLED"}
 
             bpy.ops.object.select_all(action='DESELECT')
@@ -573,7 +592,6 @@ class VOTVE_PT_mainGUI(bpy.types.Panel):
             exportSettingsBox.prop(properties, "modelname")
             exportSettingsBox.prop(properties, "export_prefix")
             exportSettingsBox.prop(properties, "export_mode")
-            exportSettingsBox.prop(properties, "useAllUCX")
 
         # Material Settings
         materialsSettingsBox = MainColumn.box()
