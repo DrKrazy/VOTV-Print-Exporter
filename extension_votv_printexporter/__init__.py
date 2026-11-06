@@ -501,10 +501,10 @@ class ExportButton(bpy.types.Operator):
         }
 
         mode = properties.export_mode
-        if mode == 'INDIVIDUAL' and len(context.selected_objects) == 1:
-            mode = 'SELECTED' 
+        if mode == "INDIVIDUAL" and len(context.selected_objects) == 1:
+            mode = "SELECTED"
 
-        if mode == 'SELECTED'
+        if mode == "SELECTED"
             bpy.context.view_layer.objects.active = context.selected_objects[0]
 
             name = properties.modelname or bpy.context.active_object.name
@@ -515,7 +515,7 @@ class ExportButton(bpy.types.Operator):
 
             self.report({'INFO'}, f"Exported Selected")
                 
-        elif mode == 'INDIVIDUAL':           
+        elif mode == "INDIVIDUAL":           
             for object in context.selected_objects:
                 bpy.ops.object.select_all(action='DESELECT')
 
@@ -526,7 +526,7 @@ class ExportButton(bpy.types.Operator):
 
             self.report({'INFO'}, f"Exported Individual")
 
-        elif mode == 'SCENE':
+        elif mode == "SCENE":
             name = properties.modelname or bpy.context.active_object.name
 
             if not exportPrint(self, bpy.context, export_path, name, bpy.context.view_layer.objects, getUCX(bpy.context.view_layer), properties, properties_file):
